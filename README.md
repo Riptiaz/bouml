@@ -4,6 +4,11 @@ Modernization and clean-slate modular rewrite of **BouML** — preserving its co
 
 The historical BouML v4 (C++/Qt 3) source code is preserved under [`legacy/`](legacy/).
 
+## Documentation
+
+- [**Guide Complet d'Utilisation**](docs/GUIDE_UTILISATION.md) — CLI, persistance `.bouml/` YAML, génération 8 langages & round-trip, import universel, IA (OpenAI/Anthropic/Ollama), JSON-RPC/MCP et UI Tauri/XYFlow.
+- [**Exemples pour Chaque Diagramme UML 2.5**](docs/EXEMPLES_DIAGRAMMES.md) — Exemples prêts à l'emploi pour les 9 types de diagrammes (Classes, Séquence, Cas d'Utilisation, États, Activités, Composants, Déploiement, Packages, Objets).
+
 ## Workspace Architecture (Phases 1–5 Complete)
 
 - `crates/bouml-core`: Pure UML 2.5 metamodel (`Package`, `Classifier`, `Property`, `Operation`, `Relation`, `Interaction`, `StateMachine`, `Activity`, decoupled `Diagram`), transactional `CommandHistory` (atomic `Batch` + Undo/Redo), and UML 2.5 / SOLID validator.
