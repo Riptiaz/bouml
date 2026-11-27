@@ -69,30 +69,36 @@ async fn ai_generate_content(
     api_key: String,
     payload_json: String,
 ) -> Result<String, String> {
-    // Enforce exclusive gemini-3.5-flash-lite model policy
-    if model != "gemini-3.5-flash-lite" {
+    let allowed = ["gemini-3.5-flash", "hydrogen-4"];
+    if !allowed.contains(&model.as_str()) {
         return Err(format!(
-            "Modèle non autorisé: {}. Seul gemini-3.5-flash-lite via Google AI Studio est autorisé.",
+            "Modèle non autorisé: {}. Modèles supportés : gemini-3.5-flash, hydrogen-4.",
             model
         ));
     }
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={}",
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        model,
         api_key.trim()
     );
 
-    let client = reqwest::Client::new();
-    let mut last_err = String::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(35))
+        .build()
+        .map_err(|e| e.to_string())?;
 
-    for attempt in 0..3 {
+    let mut last_err = String::new();
+    let max_attempts = if model == "hydrogen-4" { 1 } else { 2 };
+
+    for attempt in 0..max_attempts {
         let resp = client
             .post(&url)
             .header("Content-Type", "application/json")
             .body(payload_json.clone())
             .send()
             .await
-            .map_err(|e| format!("Erreur réseau Google AI Studio: {}", e))?;
+            .map_err(|e| format!("Erreur réseau Google AI Studio ({}): {}", model, e))?;
 
         let status = resp.status();
         let body_text = resp.text().await.map_err(|e| e.to_string())?;
@@ -108,14 +114,14 @@ async fn ai_generate_content(
                 .and_then(|c| c.parts)
                 .and_then(|p| p.into_iter().next())
                 .and_then(|p| p.text)
-                .ok_or_else(|| "Réponse vide renvoyée par gemini-3.5-flash-lite.".to_string())?;
+                .ok_or_else(|| format!("Réponse vide renvoyée par {}.", model))?;
 
             return Ok(text);
         }
 
-        last_err = format!("Erreur Google AI Studio ({}): {}", status, body_text);
-        if (status.as_u16() == 503 || status.as_u16() == 429) && attempt < 2 {
-            std::thread::sleep(std::time::Duration::from_millis(800 * (attempt + 1) as u64));
+        last_err = format!("Erreur Google AI Studio ({} - {}): {}", model, status, body_text);
+        if (status.as_u16() == 503 || status.as_u16() == 429) && attempt + 1 < max_attempts {
+            std::thread::sleep(std::time::Duration::from_millis(800));
             continue;
         }
         return Err(last_err);

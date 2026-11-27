@@ -9,6 +9,7 @@ import { CodePreviewPanel } from './components/codepreview/CodePreviewPanel';
 import { StudioModals } from './components/modals/StudioModals';
 import { DragDropOverlay } from './components/dropzone/DragDropOverlay';
 import { useProjectStore } from './store/useProjectStore';
+import { saveAsFile, saveProjectFile } from './utils/fileSystem';
 
 export const App: React.FC = () => {
   const {
@@ -19,6 +20,7 @@ export const App: React.FC = () => {
     toast,
     project,
     activeDiagramId,
+    showToast,
   } = useProjectStore();
 
   // Global guarantee: NEVER show native WebView context menu anywhere in the app
@@ -37,6 +39,29 @@ export const App: React.FC = () => {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        const currProj = useProjectStore.getState().project;
+        const suggested = `${currProj.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'projet'}.bouml.json`;
+        if (e.shiftKey) {
+          void saveAsFile({
+            suggestedName: suggested,
+            content: JSON.stringify(currProj, null, 2),
+            mimeType: 'application/json',
+            description: 'Projet BouML v2 (.bouml.json)',
+            extensions: ['.json'],
+            linkAsProjectFile: true,
+          }).then((res) => {
+            if (res.saved) showToast(`Projet enregistré sous "${res.filename ?? suggested}".`, 'success');
+          });
+        } else {
+          void saveProjectFile(suggested, JSON.stringify(currProj, null, 2)).then((res) => {
+            if (res.saved) showToast(`Projet enregistré (${res.filename ?? suggested}).`, 'success');
+          });
+        }
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -55,7 +80,7 @@ export const App: React.FC = () => {
       window.removeEventListener('contextmenu', blockWebviewContextMenu, { capture: false });
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [undo, redo]);
+  }, [undo, redo, showToast]);
 
   const activeDiag = project.diagrams[activeDiagramId];
 

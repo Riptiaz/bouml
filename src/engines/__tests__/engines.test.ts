@@ -12,11 +12,32 @@ import {
 import { importUniversalFile } from '../importers';
 import { exportHtmlDocumentation } from '../exporters/htmlDoc';
 import { exportXmi2 } from '../exporters/xmiExporter';
-import { GEMINI_MODEL } from '../../ai/geminiClient';
+import { DEFAULT_AI_MODEL, GEMINI_MODEL, callGeminiWithFallback } from '../../ai/geminiClient';
+import { computeElkLayout, SEQUENCE_LIFELINE_Y } from '../layout/elkLayout';
 
 describe('BouML v2 Core Engines', () => {
-  it('enforces exclusive gemini-3.5-flash-lite model policy', () => {
-    expect(GEMINI_MODEL).toBe('gemini-3.5-flash-lite');
+  it('defaults to gemini-3.5-flash and falls back automatically from hydrogen-4', async () => {
+    expect(DEFAULT_AI_MODEL).toBe('gemini-3.5-flash');
+    expect(GEMINI_MODEL).toBe('gemini-3.5-flash');
+
+    const calledModels: string[] = [];
+    const res = await callGeminiWithFallback({
+      apiKey: 'test-key',
+      preferredModel: 'hydrogen-4',
+      systemInstruction: 'sys',
+      prompt: 'hi',
+      caller: async (o) => {
+        calledModels.push(o.model);
+        if (o.model === 'hydrogen-4') {
+          throw new Error('503 Service Unavailable');
+        }
+        return 'OK_FALLBACK';
+      },
+    });
+    expect(calledModels).toEqual(['hydrogen-4', 'gemini-3.5-flash']);
+    expect(res.usedFallback).toBe(true);
+    expect(res.modelUsed).toBe('gemini-3.5-flash');
+    expect(res.text).toBe('OK_FALLBACK');
   });
 
   it('generates and parses PlantUML bidirectionally', () => {
@@ -196,5 +217,150 @@ return this->nom;
     const parsed = parseMethodBodyBlocks(raw);
     expect(parsed.op_1).toContain('this->quantite--');
     expect(parsed.getNom).toBe('return this->nom;');
+  });
+
+  it('round-trips sequence combined fragments (alt/else, opt, loop) and lays out lifelines horizontally', async () => {
+    const seqPuml = `@startuml
+title Séquence Achat
+actor "Client" as Client
+participant "Commande" as Commande
+participant "Stock" as Stock
+Client -> Commande : commander()
+alt stock > 0
+  Commande -> Stock : reserver()
+  loop pour chaque article
+    Stock -> Stock : decrementer()
+  end
+else rupture
+  Commande --> Client : erreurRupture()
+end
+opt clientVIP
+  Commande -> Client : appliquerRemise()
+end
+@enduml`;
+
+    const parsed = parsePlantUml(seqPuml, 'pkg_1');
+    expect(parsed.diagramKind).toBe('sequence');
+    expect(parsed.fragments.length).toBe(3);
+    expect(parsed.fragments.map((f) => f.kind)).toEqual(['alt', 'loop', 'opt']);
+    expect(parsed.fragments[0].elseCondition).toBe('rupture');
+
+    const proj = createDemoProject();
+    for (const el of parsed.elements) proj.elements[el.id] = el;
+    for (const r of parsed.relations) proj.relations[r.id] = r;
+    proj.diagrams.diag_seq_test = {
+      id: 'diag_seq_test',
+      packageId: 'pkg_1',
+      name: 'Séquence Achat',
+      kind: 'sequence',
+      nodes: parsed.elements.map((e) => ({ elementId: e.id, x: 0, y: 0 })),
+      relationIds: parsed.relations.map((r) => r.id),
+      fragments: parsed.fragments,
+    };
+
+    const exported = generatePlantUml(proj, 'diag_seq_test');
+    expect(exported).toContain('alt stock > 0');
+    expect(exported).toContain('else rupture');
+    expect(exported).toContain('loop pour chaque article');
+    expect(exported).toContain('opt clientVIP');
+    expect(exported).toContain('end');
+
+    const laidOut = await computeElkLayout(proj, 'diag_seq_test');
+    expect(laidOut).toHaveLength(3);
+    // All lifelines aligned horizontally on the exact same top Y row
+    expect(laidOut.every((n) => n.y === SEQUENCE_LIFELINE_Y)).toBe(true);
+    // Distinct strictly increasing X coordinates
+    expect(laidOut[0].x).toBeLessThan(laidOut[1].x);
+    expect(laidOut[1].x).toBeLessThan(laidOut[2].x);
+  });
+
+  it('fixes {static}, {abstract}, <<extend>>, subsystem rectangles, and composite state containers', async () => {
+    const ucPuml = `@startuml
+actor "Client" as Client
+rectangle "Paiement" {
+  usecase "Payer" as Payer
+  usecase "AppliquerPromo" as Promo
+}
+Client --> Payer
+Promo ..> Payer : <<extend>>
+@enduml`;
+
+    const parsedUc = parsePlantUml(ucPuml, 'pkg_1');
+    expect(parsedUc.subsystems).toContain('Paiement');
+    const extendRel = parsedUc.relations.find((r) => r.kind === 'extend');
+    expect(extendRel).toBeDefined();
+
+    const proj = createDemoProject();
+    for (const el of parsedUc.elements) proj.elements[el.id] = el;
+    for (const r of parsedUc.relations) proj.relations[r.id] = r;
+    proj.diagrams.diag_uc_sub = {
+      id: 'diag_uc_sub',
+      packageId: 'pkg_1',
+      name: 'UC',
+      kind: 'usecase',
+      nodes: parsedUc.elements.map((e) => ({ elementId: e.id, x: 0, y: 0 })),
+      relationIds: parsedUc.relations.map((r) => r.id),
+      subsystems: parsedUc.subsystems,
+    };
+    const ucOut = generatePlantUml(proj, 'diag_uc_sub');
+    expect(ucOut).toContain('rectangle "Paiement" {');
+    expect(ucOut).toContain('AppliquerPromo ..> Payer : <<extend>>');
+
+    // Composite state container without isolated class node
+    const statePuml = `@startuml
+state "Train" {
+  [*] --> EnGare
+  EnGare --> EnMarche : depart
+  EnMarche --> [*] : terminus
+}
+@enduml`;
+    const parsedSt = parsePlantUml(statePuml, 'pkg_1');
+    expect(parsedSt.elements.some((e) => e.name === 'Train')).toBe(false);
+    expect(parsedSt.elements.every((e) => e.stateGroup === 'Train')).toBe(true);
+
+    for (const el of parsedSt.elements) proj.elements[el.id] = el;
+    for (const r of parsedSt.relations) proj.relations[r.id] = r;
+    proj.diagrams.diag_st_comp = {
+      id: 'diag_st_comp',
+      packageId: 'pkg_1',
+      name: 'Train States',
+      kind: 'state',
+      nodes: parsedSt.elements.map((e) => ({ elementId: e.id, x: 0, y: 0 })),
+      relationIds: parsedSt.relations.map((r) => r.id),
+    };
+    const stOut = generatePlantUml(proj, 'diag_st_comp');
+    expect(stOut).toContain('state "Train" {');
+    expect(stOut).not.toContain('state "Train" as Train');
+
+    // Normalize {statique} and {, } bug
+    const dirtyClassPuml = `@startuml
+class Service {
+  {statique} -count : int
+  {, } {abstract} +run() : void
+}
+@enduml`;
+    const parsedCls = parsePlantUml(dirtyClassPuml, 'pkg_1');
+    expect(parsedCls.elements[0].attributes[0].isStatic).toBe(true);
+    expect(parsedCls.elements[0].operations[0].isAbstract).toBe(true);
+
+    const clsEl = parsedCls.elements[0];
+    proj.elements[clsEl.id] = clsEl;
+    proj.diagrams.diag_cls_clean = {
+      id: 'diag_cls_clean',
+      packageId: 'pkg_1',
+      name: 'Clean',
+      kind: 'class',
+      nodes: [{ elementId: clsEl.id, x: 0, y: 0 }],
+      relationIds: [],
+    };
+    const clsOut = generatePlantUml(proj, 'diag_cls_clean');
+    expect(clsOut).toContain('{static}');
+    expect(clsOut).not.toContain('{statique}');
+    expect(clsOut).toContain('{abstract}');
+    expect(clsOut).not.toContain('{, }');
+
+    // Verify State layout succeeds cleanly
+    const stLaidOut = await computeElkLayout(proj, 'diag_st_comp', 'RIGHT');
+    expect(stLaidOut.length).toBe(parsedSt.elements.length);
   });
 });

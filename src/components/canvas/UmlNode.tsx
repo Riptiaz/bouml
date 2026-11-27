@@ -5,6 +5,8 @@ import { useProjectStore } from '../../store/useProjectStore';
 
 export interface UmlNodeData extends Record<string, unknown> {
   element: UmlElement;
+  diagramKind?: string;
+  lifelineHeight?: number;
 }
 
 const KIND_ACCENT: Record<string, string> = {
@@ -24,7 +26,10 @@ const KIND_ACCENT: Record<string, string> = {
 const handleStyle = '!w-2.5 !h-2.5 !bg-indigo-400 !border-2 !border-slate-950 hover:!bg-white transition-colors';
 
 export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
-  const el = (data as UmlNodeData).element;
+  const nodeData = data as UmlNodeData;
+  const el = nodeData.element;
+  const isSequenceDiag = nodeData.diagramKind === 'sequence';
+  const lifelineHeight = nodeData.lifelineHeight ?? 360;
   const { updateElement, openContextMenu, selectElement } = useProjectStore();
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(el.name);
@@ -59,6 +64,44 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
       <Handle type="source" position={Position.Right} id="right" className={handleStyle} />
     </>
   );
+
+  // Sequence diagram participant / actor with vertical dashed lifeline
+  if (isSequenceDiag && (el.kind === 'lifeline' || el.kind === 'actor' || el.kind === 'class')) {
+    return (
+      <div
+        onContextMenu={handleRightClick}
+        style={{ height: lifelineHeight, width: 170 }}
+        className="relative flex flex-col items-center pointer-events-auto"
+      >
+        <Handle type="target" position={Position.Left} id="left" className="!opacity-0" />
+        <Handle type="source" position={Position.Right} id="right" className="!opacity-0" />
+        <Handle type="target" position={Position.Top} id="top" className="!opacity-0" />
+        <Handle type="source" position={Position.Bottom} id="bottom" className="!opacity-0" />
+
+        <div
+          className={`w-full px-3 py-2 rounded-xl border-2 text-center shadow-lg z-10 ${
+            el.kind === 'actor'
+              ? 'bg-slate-900 border-sky-500/70'
+              : 'bg-gradient-to-r from-blue-600/90 to-indigo-700/90 border-blue-400/70'
+          } ${selected ? 'ring-2 ring-indigo-400' : ''}`}
+        >
+          {el.kind === 'actor' && (
+            <div className="text-[10px] uppercase tracking-wider text-sky-300 font-semibold">«actor»</div>
+          )}
+          <div className="text-xs font-bold text-white truncate">{el.name}</div>
+        </div>
+
+        {/* Vertical dashed lifeline */}
+        <div
+          className="flex-1 w-0 border-l-2 border-dashed border-slate-500/80 my-1"
+          style={{ minHeight: Math.max(220, lifelineHeight - 64) }}
+        />
+
+        {/* Foot box */}
+        <div className="w-24 h-2 rounded-full bg-slate-600/60" />
+      </div>
+    );
+  }
 
   // Pseudostate (Initial / Final)
   if (el.kind === 'pseudostate') {
@@ -105,11 +148,16 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
     return (
       <div
         onContextMenu={handleRightClick}
-        className={`relative flex items-center justify-center px-6 py-4 rounded-full bg-slate-900/95 border-2 min-w-[170px] text-center shadow-lg ${
+        className={`relative flex flex-col items-center justify-center px-6 py-3.5 rounded-full bg-slate-900/95 border-2 min-w-[175px] text-center shadow-lg ${
           selected ? 'border-emerald-400 ring-2 ring-emerald-500/30' : 'border-emerald-500/60'
         }`}
       >
         {handles}
+        {el.subsystem && (
+          <span className="text-[9px] uppercase tracking-wider text-emerald-400/90 font-semibold mb-0.5">
+            [{el.subsystem}]
+          </span>
+        )}
         <span className="text-xs font-semibold text-emerald-100">{el.name}</span>
       </div>
     );
@@ -120,12 +168,17 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
     return (
       <div
         onContextMenu={handleRightClick}
-        className={`relative rounded-2xl bg-slate-900/95 border-2 min-w-[170px] shadow-lg overflow-hidden ${
+        className={`relative rounded-2xl bg-slate-900/95 border-2 min-w-[175px] shadow-lg overflow-hidden ${
           selected ? 'border-violet-400 ring-2 ring-violet-500/30' : 'border-violet-500/60'
         }`}
       >
         {handles}
         <div className="px-4 py-2 bg-violet-600/25 border-b border-violet-500/30 text-center">
+          {el.stateGroup && (
+            <div className="text-[9px] uppercase tracking-wider text-violet-300/90 font-semibold">
+              {el.stateGroup}
+            </div>
+          )}
           <div className="text-xs font-bold text-violet-100">{el.name}</div>
         </div>
         {(el.stateEntry || el.stateDo || el.stateExit) && (

@@ -140,6 +140,8 @@ export interface UmlElement {
   stateEntry?: string;
   stateDo?: string;
   stateExit?: string;
+  stateGroup?: string;
+  subsystem?: string;
   languageOverrides?: Partial<
     Record<
       TargetLanguage,
@@ -150,6 +152,19 @@ export interface UmlElement {
       }
     >
   >;
+}
+
+export type SequenceFragmentKind = 'alt' | 'opt' | 'loop';
+
+export interface SequenceFragment {
+  id: string;
+  kind: SequenceFragmentKind;
+  condition: string;
+  parentId?: string;
+  startOrder: number;
+  endOrder: number;
+  elseCondition?: string;
+  elseStartOrder?: number;
 }
 
 export interface UmlRelation {
@@ -186,6 +201,8 @@ export interface UmlDiagram {
   description?: string;
   nodes: DiagramNodePosition[];
   relationIds: string[];
+  fragments?: SequenceFragment[];
+  subsystems?: string[];
   layoutDirection?: 'DOWN' | 'RIGHT' | 'UP' | 'LEFT';
 }
 

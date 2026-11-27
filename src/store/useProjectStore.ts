@@ -19,6 +19,9 @@ import { applyDesignPattern, DesignPatternKind, generateGettersSetters } from '.
 import { computeElkLayout } from '../engines/layout/elkLayout';
 import { parsePlantUml, parsePlantUmlBlocks } from '../engines/plantuml/parser';
 import { importUniversalFile } from '../engines/importers';
+import { AiModelId, loadSelectedModel, saveSelectedModel } from '../ai/geminiClient';
+import { CropRect } from '../utils/pngExport';
+import { clearLinkedProjectFile } from '../utils/fileSystem';
 
 export interface ContextMenuState {
   x: number;
@@ -31,11 +34,13 @@ export interface ContextMenuState {
 export type ActiveModal =
   | null
   | 'ai_settings'
-  | 'spec_wizard'
-  | 'copilot'
+  | 'ai_assistant'
   | 'validation'
   | 'profiles'
-  | 'export';
+  | 'export'
+  | 'png_export';
+
+export type AiAssistantTab = 'modify' | 'generate';
 
 interface ProjectStore {
   project: BoumlProject;
@@ -45,11 +50,16 @@ interface ProjectStore {
   selectedElementId: string | null;
   selectedRelationId: string | null;
   targetLanguage: TargetLanguage;
+  theme: 'dark' | 'light';
+  aiModel: AiModelId;
   rightPanelTab: 'inspector' | 'code' | 'plantuml';
   splitCodeOpen: boolean;
   contextMenu: ContextMenuState | null;
   activeModal: ActiveModal;
+  aiAssistantTab: AiAssistantTab;
   copilotContext: { elementId?: string; initialAction?: 'complete_bodies' | 'audit_solid' | 'generate_tests' | 'custom' } | null;
+  pngCropMode: boolean;
+  pngCropRect: CropRect | null;
   issues: ValidationIssue[];
   toast: { message: string; kind: 'info' | 'success' | 'error' } | null;
 
@@ -58,11 +68,21 @@ interface ProjectStore {
   selectElement: (id: string | null) => void;
   selectRelation: (id: string | null) => void;
   setTargetLanguage: (lang: TargetLanguage) => void;
+  toggleTheme: () => void;
+  setAiModel: (model: AiModelId) => void;
   setRightPanelTab: (tab: 'inspector' | 'code' | 'plantuml') => void;
   toggleSplitCode: () => void;
   openContextMenu: (menu: ContextMenuState | null) => void;
   setActiveModal: (modal: ActiveModal) => void;
+  setAiAssistantTab: (tab: AiAssistantTab) => void;
+  openAiAssistant: (opts?: {
+    tab?: AiAssistantTab;
+    elementId?: string;
+    initialAction?: 'complete_bodies' | 'audit_solid' | 'generate_tests' | 'custom';
+  }) => void;
   openCopilot: (elementId?: string, initialAction?: 'complete_bodies' | 'audit_solid' | 'generate_tests' | 'custom') => void;
+  startPngCropMode: () => void;
+  finishPngCrop: (rect: CropRect | null) => void;
   showToast: (message: string, kind?: 'info' | 'success' | 'error') => void;
 
   // Undo / Redo
@@ -111,6 +131,21 @@ interface ProjectStore {
 
 const initialProject = createDemoProject();
 
+function loadInitialTheme(): 'dark' | 'light' {
+  if (typeof window === 'undefined') return 'dark';
+  return localStorage.getItem('bouml_v2_theme') === 'light' ? 'light' : 'dark';
+}
+
+function applyThemeToDom(theme: 'dark' | 'light'): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.setAttribute('data-theme', theme);
+  if (theme === 'dark') document.documentElement.classList.add('dark');
+  else document.documentElement.classList.remove('dark');
+}
+
+const initialTheme = loadInitialTheme();
+applyThemeToDom(initialTheme);
+
 function commitProject(
   state: ProjectStore,
   nextProject: BoumlProject
@@ -131,11 +166,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   selectedElementId: 'el_order',
   selectedRelationId: null,
   targetLanguage: initialProject.defaultLanguage,
+  theme: initialTheme,
+  aiModel: loadSelectedModel(),
   rightPanelTab: 'inspector',
   splitCodeOpen: true,
   contextMenu: null,
   activeModal: null,
+  aiAssistantTab: 'modify',
   copilotContext: null,
+  pngCropMode: false,
+  pngCropRect: null,
   issues: validateProject(initialProject),
   toast: null,
 
@@ -147,21 +187,61 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       targetLanguage: lang,
       project: { ...s.project, defaultLanguage: lang },
     })),
+  toggleTheme: () =>
+    set((s) => {
+      const next: 'dark' | 'light' = s.theme === 'dark' ? 'light' : 'dark';
+      if (typeof window !== 'undefined') localStorage.setItem('bouml_v2_theme', next);
+      applyThemeToDom(next);
+      return { theme: next };
+    }),
+  setAiModel: (model) => {
+    saveSelectedModel(model);
+    set({ aiModel: model });
+  },
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
   toggleSplitCode: () => set((s) => ({ splitCodeOpen: !s.splitCodeOpen })),
   openContextMenu: (menu) => set({ contextMenu: menu }),
   setActiveModal: (modal) => set({ activeModal: modal, contextMenu: null }),
+  setAiAssistantTab: (tab) => set({ aiAssistantTab: tab }),
+  openAiAssistant: (opts) =>
+    set((s) => {
+      const activeDiag = s.project.diagrams[s.activeDiagramId];
+      const hasNodes = Boolean(activeDiag && activeDiag.nodes.length > 0);
+      const defaultTab: AiAssistantTab = opts?.tab ?? (hasNodes ? 'modify' : 'generate');
+      return {
+        activeModal: 'ai_assistant',
+        aiAssistantTab: defaultTab,
+        copilotContext: {
+          elementId: opts?.elementId ?? s.selectedElementId ?? undefined,
+          initialAction: opts?.initialAction ?? 'custom',
+        },
+        contextMenu: null,
+      };
+    }),
   openCopilot: (elementId, initialAction) =>
+    get().openAiAssistant({
+      tab: 'modify',
+      elementId,
+      initialAction: initialAction ?? 'custom',
+    }),
+  startPngCropMode: () =>
     set({
-      copilotContext: { elementId, initialAction },
-      activeModal: 'copilot',
+      activeModal: null,
+      pngCropMode: true,
+      pngCropRect: null,
       contextMenu: null,
+    }),
+  finishPngCrop: (rect) =>
+    set({
+      pngCropMode: false,
+      pngCropRect: rect,
+      activeModal: 'png_export',
     }),
   showToast: (message, kind = 'info') => {
     set({ toast: { message, kind } });
     setTimeout(() => {
       set((s) => (s.toast?.message === message ? { toast: null } : s));
-    }, 3600);
+    }, 4200);
   },
 
   undo: () =>
@@ -189,6 +269,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }),
 
   loadProject: (project) => {
+    clearLinkedProjectFile();
     const firstDiag = Object.keys(project.diagrams)[0] ?? '';
     set({
       project,
@@ -203,6 +284,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   newProject: (name = 'Nouveau Projet UML') => {
+    clearLinkedProjectFile();
     const pkgId = createId('pkg');
     const diagId = createId('diag');
     const fresh: BoumlProject = {
@@ -675,6 +757,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             kind: parsed.diagramKind,
             nodes: nodePositions,
             relationIds: relIds,
+            fragments: parsed.fragments,
+            subsystems: parsed.subsystems,
           },
         },
       });
@@ -819,6 +903,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         layoutDirection: blk.diagramKind === 'state' || blk.diagramKind === 'usecase' ? 'RIGHT' : 'DOWN',
         nodes,
         relationIds,
+        fragments: blk.fragments,
+        subsystems: blk.subsystems,
       };
     }
 
@@ -836,9 +922,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       selectedRelationId: null,
     }));
 
-    await get().runAutoLayout();
+    // Run auto-layout on every newly generated diagram (including Sequence lifelines & States)
+    const createdIds = Object.keys(nextDiagrams).filter(
+      (id) => isProjectEmpty || !state.project.diagrams[id]
+    );
+    for (const did of createdIds) {
+      const d = get().project.diagrams[did];
+      if (!d || d.nodes.length === 0) continue;
+      const positions = await computeElkLayout(get().project, did, d.layoutDirection ?? 'DOWN');
+      set((s) => ({
+        project: {
+          ...s.project,
+          diagrams: {
+            ...s.project.diagrams,
+            [did]: { ...s.project.diagrams[did], nodes: positions },
+          },
+        },
+      }));
+    }
+
     get().showToast(
-      `${totalElements} élément(s) modélisé(s) par Gemini 3.5 Flash Lite !`,
+      `${totalElements} élément(s) modélisé(s) avec succès !`,
       'success'
     );
   },

@@ -41,6 +41,8 @@ export const SPEC_TO_UML_RESPONSE_SCHEMA = {
           },
           packageName: { type: 'STRING' },
           stereotype: { type: 'STRING' },
+          subsystem: { type: 'STRING' },
+          stateGroup: { type: 'STRING' },
           description: { type: 'STRING' },
           enumLiterals: { type: 'ARRAY', items: { type: 'STRING' } },
           attributes: {

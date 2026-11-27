@@ -3,6 +3,8 @@ import {
   DiagramKind,
   ElementKind,
   RelationKind,
+  SequenceFragment,
+  SequenceFragmentKind,
   UmlAttribute,
   UmlElement,
   UmlOperation,
@@ -16,6 +18,8 @@ export interface ParsedPlantUmlResult {
   diagramKind: DiagramKind;
   elements: UmlElement[];
   relations: UmlRelation[];
+  fragments: SequenceFragment[];
+  subsystems: string[];
   packages: string[];
 }
 
@@ -48,7 +52,11 @@ function parseRelationKind(arrow: string, label?: string): RelationKind {
     if (label?.toLowerCase().includes('extend')) return 'extend';
     return 'dependency';
   }
-  if (arrow.includes('-->') || arrow.includes('<--')) return 'directional_association';
+  if (arrow.includes('-->') || arrow.includes('<--')) {
+    if (label?.toLowerCase().includes('<<extend>>')) return 'extend';
+    if (label?.toLowerCase().includes('<<include>>')) return 'include';
+    return 'directional_association';
+  }
   if (arrow.includes('->>') || arrow.includes('->')) return 'message';
   return 'association';
 }
@@ -63,7 +71,6 @@ function cleanStereotype(raw?: string): string | undefined {
 function parseParameters(rawParams: string): UmlParameter[] {
   if (!rawParams.trim()) return [];
   const params: UmlParameter[] = [];
-  // Split on commas outside angle brackets <...>
   let current = '';
   let angleDepth = 0;
   for (const ch of rawParams) {
@@ -81,7 +88,6 @@ function parseParameters(rawParams: string): UmlParameter[] {
 }
 
 function parseSingleParam(raw: string): UmlParameter {
-  // Handle default value: x : int = 0
   let defaultValue: string | undefined;
   let main = raw;
   const eqIdx = raw.indexOf('=');
@@ -90,12 +96,10 @@ function parseSingleParam(raw: string): UmlParameter {
     main = raw.slice(0, eqIdx).trim();
   }
 
-  // Strip direction prefix (in/out/inout)
   const dirMatch = main.match(/^(in|out|inout)\s+(.+)$/i);
   const direction = dirMatch ? (dirMatch[1].toLowerCase() as UmlParameter['direction']) : undefined;
   if (dirMatch) main = dirMatch[2].trim();
 
-  // Style 1: "nom : string" (UML/PlantUML standard)
   const colonIdx = main.indexOf(':');
   if (colonIdx !== -1 && !main.slice(colonIdx, colonIdx + 2).startsWith('::')) {
     const name = main.slice(0, colonIdx).trim();
@@ -103,7 +107,6 @@ function parseSingleParam(raw: string): UmlParameter {
     return { id: createId('p'), name, type: type || 'any', direction, defaultValue };
   }
 
-  // Style 2: "const std::string& nom" or "int prix" (C++/Java style)
   const tokens = main.split(/\s+/);
   if (tokens.length >= 2) {
     const name = tokens[tokens.length - 1].replace(/^[&*]+/, '');
@@ -117,7 +120,10 @@ function parseSingleParam(raw: string): UmlParameter {
 export function parsePlantUml(source: string, defaultPackageId: string): ParsedPlantUmlResult {
   const stripped = source
     .replace(/```(?:plantuml|puml|uml)?/gi, '')
-    .replace(/```/g, '');
+    .replace(/```/g, '')
+    // Normalize common localization / serialization bugs automatically
+    .replace(/\{statique\}/gi, '{static}')
+    .replace(/\{\s*,\s*\}/g, '');
 
   const lines = stripped
     .split(/\r?\n/)
@@ -138,16 +144,39 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
   const byAlias = new Map<string, UmlElement>();
   const elements: UmlElement[] = [];
   const relations: UmlRelation[] = [];
+  const fragments: SequenceFragment[] = [];
+  const subsystems: string[] = [];
   const packages: string[] = [];
+
   let diagramKind: DiagramKind = 'class';
   let title: string | undefined;
   let currentBlock: UmlElement | null = null;
-  let insidePackage = false;
+  const containerStack: Array<{ type: 'package' | 'subsystem' | 'state_group'; name: string }> = [];
+  const fragmentStack: SequenceFragment[] = [];
+  let messageCounter = 0;
+
+  const activeStateGroup = (): string | undefined => {
+    for (let i = containerStack.length - 1; i >= 0; i--) {
+      if (containerStack[i].type === 'state_group') return containerStack[i].name;
+    }
+    return undefined;
+  };
+
+  const activeSubsystem = (): string | undefined => {
+    for (let i = containerStack.length - 1; i >= 0; i--) {
+      if (containerStack[i].type === 'subsystem') return containerStack[i].name;
+    }
+    return undefined;
+  };
 
   const ensureElement = (rawName: string, kind: ElementKind = 'class'): UmlElement => {
     const clean = rawName.replace(/^"|"$/g, '').trim();
-    const existing = byAlias.get(clean);
-    if (existing) return existing;
+    const sg = activeStateGroup();
+    const lookupKey = kind === 'state' || kind === 'pseudostate' ? `${sg ?? ''}::${clean}` : clean;
+    const existing = byAlias.get(lookupKey) ?? byAlias.get(clean);
+    if (existing && (kind !== 'pseudostate' || existing.stateGroup === sg)) {
+      return existing;
+    }
     const el: UmlElement = {
       id: createId('el'),
       packageId: defaultPackageId,
@@ -159,8 +188,11 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
       attributes: [],
       operations: [],
       enumLiterals: kind === 'enum' ? [] : undefined,
+      stateGroup: kind === 'state' || kind === 'pseudostate' ? sg : undefined,
+      subsystem: kind === 'usecase' ? activeSubsystem() : undefined,
     };
-    byAlias.set(clean, el);
+    byAlias.set(lookupKey, el);
+    if (!byAlias.has(clean)) byAlias.set(clean, el);
     elements.push(el);
     return el;
   };
@@ -177,9 +209,67 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
     if (line === '}') {
       if (currentBlock) {
         currentBlock = null;
-      } else if (insidePackage) {
-        insidePackage = false;
+      } else if (containerStack.length > 0) {
+        containerStack.pop();
       }
+      continue;
+    }
+
+    // Sequence combined fragments: alt / else / opt / loop / end
+    const fragOpen = line.match(/^(alt|opt|loop)\b\s*(.*)$/i);
+    if (fragOpen && !currentBlock) {
+      diagramKind = 'sequence';
+      const kindRaw = fragOpen[1].toLowerCase() as SequenceFragmentKind;
+      const cond = fragOpen[2].trim();
+      const parentId = fragmentStack.length > 0 ? fragmentStack[fragmentStack.length - 1].id : undefined;
+      const frag: SequenceFragment = {
+        id: createId('frag'),
+        kind: kindRaw,
+        condition: cond,
+        parentId,
+        startOrder: messageCounter + 1,
+        endOrder: messageCounter + 1,
+      };
+      fragmentStack.push(frag);
+      fragments.push(frag);
+      continue;
+    }
+
+    const fragElse = line.match(/^else\b\s*(.*)$/i);
+    if (fragElse && !currentBlock && fragmentStack.length > 0) {
+      const top = fragmentStack[fragmentStack.length - 1];
+      if (top.kind === 'alt') {
+        top.elseCondition = fragElse[1].trim() || undefined;
+        top.elseStartOrder = messageCounter + 1;
+      }
+      continue;
+    }
+
+    if (/^end$/i.test(line) && !currentBlock && fragmentStack.length > 0) {
+      const closed = fragmentStack.pop()!;
+      closed.endOrder = Math.max(closed.startOrder, messageCounter);
+      continue;
+    }
+
+    // Composite state container: state "Train" {  or  state "Train" as Train {
+    const compositeStateMatch = line.match(
+      /^state\s+(?:"([^"]+)"|([^\s{]+))(?:\s+as\s+\S+)?\s*\{$/i
+    );
+    if (compositeStateMatch && !currentBlock) {
+      diagramKind = 'state';
+      const groupName = (compositeStateMatch[1] || compositeStateMatch[2]).trim();
+      containerStack.push({ type: 'state_group', name: groupName });
+      continue;
+    }
+
+    // Subsystem rectangle container in UseCase diagrams: rectangle "Sous-Système" {
+    const rectMatch = line.match(
+      /^rectangle\s+(?:"([^"]+)"|([^\s{]+))(?:\s+as\s+\S+)?\s*\{$/i
+    );
+    if (rectMatch && !currentBlock) {
+      const subName = (rectMatch[1] || rectMatch[2]).trim();
+      if (!subsystems.includes(subName)) subsystems.push(subName);
+      containerStack.push({ type: 'subsystem', name: subName });
       continue;
     }
 
@@ -188,11 +278,11 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
     if (pkgMatch && !currentBlock) {
       const pkgName = (pkgMatch[1] || pkgMatch[2]).trim();
       if (!packages.includes(pkgName)) packages.push(pkgName);
-      if (line.endsWith('{')) insidePackage = true;
+      if (line.endsWith('{')) containerStack.push({ type: 'package', name: pkgName });
       continue;
     }
 
-    // Separator lines inside class blocks (e.g. --, ==, ..)
+    // Separator lines inside class blocks
     if (currentBlock && /^(--|==|\.\.|__)/.test(line)) {
       continue;
     }
@@ -215,7 +305,6 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
         /\)\s*(?::\s*[^\n{]+)?\s+\bconst\b\s*$/i.test(line) ||
         /\)\s+\bconst\b\s*(?::|$)/i.test(line);
 
-      // Remove inline PlantUML modifiers for clean signature parsing
       const cleaned = line
         .replace(/\{(?:static|abstract|virtual|async|const|query|readOnly|readonly|final|field|method)\}/gi, '')
         .replace(/\b(?:static|abstract|virtual|async|readonly)\b/gi, '')
@@ -224,7 +313,6 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Operation: +method(a: int, b: string) : returnType  OR  +Constructor(a: int)
       const opMatch = cleaned.match(
         /^([+#\-~]|(?:public|private|protected|package)\s+)?\s*(?:~?[A-Za-z_][\w]*::)?(~?[A-Za-z_][\w]*)\s*\(([^)]*)\)\s*(?::\s*(.+))?$/
       );
@@ -253,7 +341,6 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
         continue;
       }
 
-      // Attribute style 1 (UML): -nom : string = "default"
       const attColonMatch = cleaned.match(
         /^([+#\-~]|(?:public|private|protected|package)\s+)?\s*([A-Za-z_][\w]*)\s*:\s*([^=]+)(?:=\s*(.+))?$/
       );
@@ -272,7 +359,6 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
         continue;
       }
 
-      // Attribute style 2 (C++/Java): -string nom = "default"
       const attSpaceMatch = cleaned.match(
         /^([+#\-~]|(?:public|private|protected|package)\s+)?\s*([A-Za-z_][\w:<>,\[\]*&]+)\s+([A-Za-z_][\w]*)(?:\s*=\s*(.+))?$/
       );
@@ -289,6 +375,19 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
         };
         currentBlock.attributes.push(att);
       }
+      continue;
+    }
+
+    // State entry/do/exit action line: StateName : entry / init()
+    const stateActionMatch = line.match(/^([A-Za-z_][\w]*)\s*:\s*(entry|do|exit)\s*\/\s*(.+)$/i);
+    if (stateActionMatch) {
+      diagramKind = 'state';
+      const [, stateAlias, actionKind, actionText] = stateActionMatch;
+      const st = ensureElement(stateAlias, 'state');
+      const k = actionKind.toLowerCase();
+      if (k === 'entry') st.stateEntry = actionText.trim();
+      else if (k === 'do') st.stateDo = actionText.trim();
+      else if (k === 'exit') st.stateExit = actionText.trim();
       continue;
     }
 
@@ -324,7 +423,11 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
       }
       const el = ensureElement(name, kind);
       el.stereotype = cleanStereotype(stereo);
-      if (alias) byAlias.set(alias, el);
+      if (alias) {
+        const sg = activeStateGroup();
+        byAlias.set(kind === 'state' ? `${sg ?? ''}::${alias}` : alias, el);
+        byAlias.set(alias, el);
+      }
       continue;
     }
 
@@ -367,12 +470,17 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
       const resolveNode = (token: string, isTarget: boolean): UmlElement => {
         if (token === '[*]') {
           diagramKind = 'state';
-          const psName = isTarget ? 'Final' : 'Initial';
+          const sg = activeStateGroup();
+          const psName = isTarget ? (sg ? `${sg}_Final` : 'Final') : sg ? `${sg}_Initial` : 'Initial';
           const ps = ensureElement(psName, 'pseudostate');
           ps.pseudoStateKind = isTarget ? 'final' : 'initial';
+          ps.stateGroup = sg;
           return ps;
         }
-        return ensureElement(token, diagramKind === 'state' ? 'state' : 'class');
+        return ensureElement(
+          token,
+          diagramKind === 'state' ? 'state' : diagramKind === 'sequence' ? 'lifeline' : 'class'
+        );
       };
 
       const a = resolveNode(rawSrc, false);
@@ -386,6 +494,17 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
             ? 'message'
             : parseRelationKind(arrow, rawLabel);
 
+      let seqOrder: number | undefined;
+      if (kind === 'message') {
+        messageCounter++;
+        seqOrder = messageCounter;
+        for (const f of fragmentStack) {
+          f.endOrder = messageCounter;
+        }
+      }
+
+      const cleanedLabel = rawLabel?.replace(/<<include>>|<<extend>>/gi, '').trim();
+
       relations.push({
         id: createId('rel'),
         kind,
@@ -393,13 +512,23 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
         targetId: target.id,
         sourceMultiplicity: reversed ? tgtMult : srcMult,
         targetMultiplicity: reversed ? srcMult : tgtMult,
-        label: rawLabel?.replace(/<<|>>/g, '').trim(),
-        sequenceOrder: kind === 'message' ? relations.length + 1 : undefined,
+        label: cleanedLabel || undefined,
+        stereotype:
+          kind === 'include' ? 'include' : kind === 'extend' ? 'extend' : undefined,
+        messageKind:
+          kind === 'message'
+            ? arrow.includes('-->')
+              ? 'return'
+              : arrow.includes('->>')
+                ? 'async'
+                : 'sync'
+            : undefined,
+        sequenceOrder: seqOrder,
       });
     }
   }
 
-  return { title, diagramKind, elements, relations, packages };
+  return { title, diagramKind, elements, relations, fragments, subsystems, packages };
 }
 
 /**

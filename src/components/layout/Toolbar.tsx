@@ -7,21 +7,27 @@ import {
   FilePlus2,
   FolderOpen,
   LayoutGrid,
+  Moon,
   Plus,
   Redo2,
   Save,
+  SaveAll,
   Settings,
   Sparkles,
+  Sun,
   Undo2,
 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { BoumlProject } from '../../model/schema';
+import { saveAsFile, saveProjectFile } from '../../utils/fileSystem';
 
 export const Toolbar: React.FC = () => {
   const {
     project,
     past,
     future,
+    theme,
+    toggleTheme,
     undo,
     redo,
     newProject,
@@ -29,6 +35,7 @@ export const Toolbar: React.FC = () => {
     addElement,
     runAutoLayout,
     setActiveModal,
+    openAiAssistant,
     issues,
     rightPanelTab,
     setRightPanelTab,
@@ -40,15 +47,27 @@ export const Toolbar: React.FC = () => {
   const errorCount = issues.filter((i) => i.severity === 'error').length;
   const warnCount = issues.filter((i) => i.severity === 'warning').length;
 
-  const handleSaveJson = () => {
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.bouml.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('Projet sauvegardé au format Git-friendly (.bouml.json).', 'success');
+  const suggestedFilename = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'projet'}.bouml.json`;
+
+  const handleSave = async () => {
+    const res = await saveProjectFile(suggestedFilename, JSON.stringify(project, null, 2));
+    if (res.saved) {
+      showToast(`Projet enregistré (${res.filename ?? suggestedFilename}).`, 'success');
+    }
+  };
+
+  const handleSaveAs = async () => {
+    const res = await saveAsFile({
+      suggestedName: suggestedFilename,
+      content: JSON.stringify(project, null, 2),
+      mimeType: 'application/json',
+      description: 'Projet BouML v2 (.bouml.json)',
+      extensions: ['.json'],
+      linkAsProjectFile: true,
+    });
+    if (res.saved) {
+      showToast(`Projet enregistré sous "${res.filename ?? suggestedFilename}".`, 'success');
+    }
   };
 
   const handleOpenFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,14 +95,14 @@ export const Toolbar: React.FC = () => {
   return (
     <header className="h-12 bg-slate-900/95 border-b border-slate-800 px-3 flex items-center justify-between gap-2 shrink-0">
       {/* Left: Brand & File ops */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         <div className="flex items-center gap-2 pr-2 border-r border-slate-800">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center font-black text-xs text-white shadow">
             B2
           </div>
           <div className="leading-tight">
             <div className="text-xs font-bold text-white tracking-tight">BouML v2</div>
-            <div className="text-[10px] text-slate-400 truncate max-w-[140px]">{project.name}</div>
+            <div className="text-[10px] text-slate-400 truncate max-w-[130px]">{project.name}</div>
           </div>
         </div>
 
@@ -94,8 +113,11 @@ export const Toolbar: React.FC = () => {
           <FolderOpen className="w-3.5 h-3.5 text-slate-300" />
         </button>
         <input ref={openFileRef} type="file" accept=".json" className="hidden" onChange={handleOpenFile} />
-        <button className={btnCls} onClick={handleSaveJson} title="Sauvegarder (.bouml.json)">
+        <button className={btnCls} onClick={handleSave} title="Enregistrer (Ctrl+S)">
           <Save className="w-3.5 h-3.5 text-slate-300" />
+        </button>
+        <button className={btnCls} onClick={handleSaveAs} title="Enregistrer sous... (Ctrl+Shift+S)">
+          <SaveAll className="w-3.5 h-3.5 text-slate-300" />
         </button>
 
         <div className="h-5 w-px bg-slate-800 mx-0.5" />
@@ -127,21 +149,22 @@ export const Toolbar: React.FC = () => {
         <button
           className={btnCls}
           onClick={() => runAutoLayout()}
-          title="Réorganiser automatiquement le diagramme (ELK)"
+          title="Réorganiser automatiquement le diagramme (ELK / Lifelines)"
         >
           <LayoutGrid className="w-3.5 h-3.5 text-cyan-400" />
           Auto-Layout
         </button>
       </div>
 
-      {/* Center / Right: AI Spec Generator + Validation + Code Preview + Settings */}
-      <div className="flex items-center gap-2">
+      {/* Right: Unified AI Assistant + Validation + Code Preview + Export + Theme + Settings */}
+      <div className="flex items-center gap-1.5">
         <button
-          onClick={() => setActiveModal('spec_wizard')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:from-indigo-500 hover:to-fuchsia-500 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"
+          onClick={() => openAiAssistant()}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:from-indigo-500 hover:to-fuchsia-500 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"
+          title="Modifier le diagramme actuel ou générer depuis un cahier des charges"
         >
           <Sparkles className="w-3.5 h-3.5" />
-          Générer depuis un Cahier des Charges
+          Assistant IA
         </button>
 
         <button
@@ -169,19 +192,30 @@ export const Toolbar: React.FC = () => {
         <button
           onClick={() => setActiveModal('export')}
           className={btnCls}
-          title="Exporter Code, PlantUML, HTML Doc, XMI 2.1"
+          title="Exporter en PNG, Code, PlantUML, HTML Doc, XMI 2.1"
         >
           <Download className="w-3.5 h-3.5 text-emerald-400" />
           Exporter
         </button>
 
         <button
+          onClick={toggleTheme}
+          className={btnCls}
+          title={theme === 'dark' ? 'Passer en Thème Clair' : 'Passer en Thème Sombre'}
+        >
+          {theme === 'dark' ? (
+            <Sun className="w-3.5 h-3.5 text-amber-400" />
+          ) : (
+            <Moon className="w-3.5 h-3.5 text-indigo-500" />
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveModal('ai_settings')}
           className={btnCls}
-          title="Paramètres → Intelligence Artificielle (Google AI Studio)"
+          title="Paramètres → Intelligence Artificielle"
         >
           <Settings className="w-3.5 h-3.5 text-slate-300" />
-          IA
         </button>
       </div>
     </header>
