@@ -69,10 +69,14 @@ async fn ai_generate_content(
     api_key: String,
     payload_json: String,
 ) -> Result<String, String> {
-    let allowed = ["gemini-3.5-flash-lite", "gemini-4-hydrogen"];
+    let allowed = [
+        "gemini-4-hydrogen",
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+    ];
     if !allowed.contains(&model.as_str()) {
         return Err(format!(
-            "Modèle non autorisé: {}. Modèles supportés : gemini-3.5-flash-lite, gemini-4-hydrogen.",
+            "Modèle non autorisé: {}. Modèles supportés : gemini-4-hydrogen, gemini-3.8-flash, gemini-3.5-flash-lite.",
             model
         ));
     }
@@ -88,46 +92,37 @@ async fn ai_generate_content(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut last_err = String::new();
-    let max_attempts = if model == "gemini-4-hydrogen" { 1 } else { 2 };
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(payload_json)
+        .send()
+        .await
+        .map_err(|e| format!("Erreur réseau Google AI Studio ({}): {}", model, e))?;
 
-    for attempt in 0..max_attempts {
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .body(payload_json.clone())
-            .send()
-            .await
-            .map_err(|e| format!("Erreur réseau Google AI Studio ({}): {}", model, e))?;
+    let status = resp.status();
+    let body_text = resp.text().await.map_err(|e| e.to_string())?;
 
-        let status = resp.status();
-        let body_text = resp.text().await.map_err(|e| e.to_string())?;
-
-        if status.is_success() {
-            let parsed: GeminiResponse = serde_json::from_str(&body_text)
-                .map_err(|e| format!("Réponse JSON invalide: {}", e))?;
-
-            let text = parsed
-                .candidates
-                .and_then(|c| c.into_iter().next())
-                .and_then(|c| c.content)
-                .and_then(|c| c.parts)
-                .and_then(|p| p.into_iter().next())
-                .and_then(|p| p.text)
-                .ok_or_else(|| format!("Réponse vide renvoyée par {}.", model))?;
-
-            return Ok(text);
-        }
-
-        last_err = format!("Erreur Google AI Studio ({} - {}): {}", model, status, body_text);
-        if (status.as_u16() == 503 || status.as_u16() == 429) && attempt + 1 < max_attempts {
-            std::thread::sleep(std::time::Duration::from_millis(800));
-            continue;
-        }
-        return Err(last_err);
+    if !status.is_success() {
+        return Err(format!(
+            "Erreur Google AI Studio ({} - {}): {}",
+            model, status, body_text
+        ));
     }
 
-    Err(last_err)
+    let parsed: GeminiResponse =
+        serde_json::from_str(&body_text).map_err(|e| format!("Réponse JSON invalide: {}", e))?;
+
+    let text = parsed
+        .candidates
+        .and_then(|c| c.into_iter().next())
+        .and_then(|c| c.content)
+        .and_then(|c| c.parts)
+        .and_then(|p| p.into_iter().next())
+        .and_then(|p| p.text)
+        .ok_or_else(|| format!("Réponse vide renvoyée par {}.", model))?;
+
+    Ok(text)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -152,6 +147,15 @@ fn write_generated_files(output_dir: String, files: Vec<GeneratedFileInput>) -> 
     Ok(written)
 }
 
+#[tauri::command]
+fn write_single_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&target, &bytes).map_err(|e| format!("Impossible d'écrire {}: {}", path, e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -161,7 +165,8 @@ pub fn run() {
             save_api_key,
             load_api_key,
             ai_generate_content,
-            write_generated_files
+            write_generated_files,
+            write_single_file
         ])
         .run(tauri::generate_context!())
         .expect("Erreur lors du démarrage de BouML v2");

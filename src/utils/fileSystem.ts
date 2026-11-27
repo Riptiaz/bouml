@@ -1,8 +1,11 @@
+import { invoke } from '@tauri-apps/api/core';
+
 /**
  * Unified cross-platform Save / Save As utility:
- * 1. Tauri Desktop native dialog (Windows, macOS, Linux) via @tauri-apps/plugin-dialog + plugin-fs
- * 2. Browser File System Access API (window.showSaveFilePicker) with linked FileSystemFileHandle
- * 3. Clean browser download fallback
+ * 1. Tauri Desktop: opens native OS dialog via @tauri-apps/plugin-dialog, then writes directly via Rust `write_single_file`
+ *    (eliminates Tauri v2 plugin-fs scope errors that previously caused a double Save dialog!).
+ * 2. Browser: File System Access API (window.showSaveFilePicker) with linked FileSystemFileHandle.
+ * 3. Clean browser download fallback.
  */
 
 interface FilePickerAcceptType {
@@ -35,7 +38,6 @@ function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-// Active linked project file target for silent Ctrl+S overwrites
 let linkedTauriPath: string | null = null;
 let linkedFileHandle: FileHandleLike | null = null;
 
@@ -49,6 +51,13 @@ export function getLinkedProjectFileName(): string | null {
     return linkedTauriPath.split(/[\\/]/).pop() ?? linkedTauriPath;
   }
   return linkedFileHandle?.name ?? null;
+}
+
+async function contentToByteArray(content: string | Blob): Promise<number[]> {
+  if (content instanceof Blob) {
+    return Array.from(new Uint8Array(await content.arrayBuffer()));
+  }
+  return Array.from(new TextEncoder().encode(content));
 }
 
 function triggerFallbackDownload(
@@ -69,10 +78,12 @@ export interface SaveFileResult {
   saved: boolean;
   cancelled?: boolean;
   filename?: string;
+  error?: string;
 }
 
 /**
  * Always prompts the user for destination file path & name (Save As / Exports).
+ * Guarantees ONLY ONE dialog is ever opened.
  */
 export async function saveAsFile(options: {
   suggestedName: string;
@@ -84,40 +95,33 @@ export async function saveAsFile(options: {
 }): Promise<SaveFileResult> {
   const { suggestedName, content, mimeType, description, extensions, linkAsProjectFile } = options;
 
-  // 1. Tauri Desktop native Save dialog
+  // 1. Tauri Desktop native Save dialog + Rust direct write (never falls through to a 2nd dialog)
   if (isTauriRuntime()) {
-    try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const { writeTextFile, writeFile } = await import('@tauri-apps/plugin-fs');
-      const selectedPath = await save({
-        defaultPath: suggestedName,
-        filters: [
-          {
-            name: description,
-            extensions: extensions.map((e) => e.replace(/^\./, '')),
-          },
-        ],
-      });
-      if (!selectedPath) return { saved: false, cancelled: true };
-
-      if (content instanceof Blob) {
-        const bytes = new Uint8Array(await content.arrayBuffer());
-        await writeFile(selectedPath, bytes);
-      } else {
-        await writeTextFile(selectedPath, content);
-      }
-
-      if (linkAsProjectFile) {
-        linkedTauriPath = selectedPath;
-        linkedFileHandle = null;
-      }
-      return {
-        saved: true,
-        filename: selectedPath.split(/[\\/]/).pop() ?? selectedPath,
-      };
-    } catch {
-      // Fall through to File System Access API or browser download
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const selectedPath = await save({
+      defaultPath: suggestedName,
+      filters: [
+        {
+          name: description,
+          extensions: extensions.map((e) => e.replace(/^\./, '')),
+        },
+      ],
+    });
+    if (!selectedPath) {
+      return { saved: false, cancelled: true };
     }
+
+    const bytes = await contentToByteArray(content);
+    await invoke('write_single_file', { path: selectedPath, bytes });
+
+    if (linkAsProjectFile) {
+      linkedTauriPath = selectedPath;
+      linkedFileHandle = null;
+    }
+    return {
+      saved: true,
+      filename: selectedPath.split(/[\\/]/).pop() ?? selectedPath,
+    };
   }
 
   // 2. Browser File System Access API (showSaveFilePicker)
@@ -147,6 +151,7 @@ export async function saveAsFile(options: {
       if (err instanceof DOMException && err.name === 'AbortError') {
         return { saved: false, cancelled: true };
       }
+      throw err;
     }
   }
 
@@ -156,7 +161,7 @@ export async function saveAsFile(options: {
 }
 
 /**
- * Save project (Ctrl+S): overwrites silently if already linked, otherwise prompts with Save As dialog.
+ * Save project (Ctrl+S): overwrites silently if already linked, otherwise prompts once.
  */
 export async function saveProjectFile(
   suggestedName: string,
@@ -164,14 +169,13 @@ export async function saveProjectFile(
 ): Promise<SaveFileResult> {
   if (isTauriRuntime() && linkedTauriPath) {
     try {
-      const { writeTextFile } = await import('@tauri-apps/plugin-fs');
-      await writeTextFile(linkedTauriPath, jsonContent);
+      const bytes = await contentToByteArray(jsonContent);
+      await invoke('write_single_file', { path: linkedTauriPath, bytes });
       return {
         saved: true,
         filename: linkedTauriPath.split(/[\\/]/).pop() ?? linkedTauriPath,
       };
     } catch {
-      // Re-prompt on error
       linkedTauriPath = null;
     }
   }

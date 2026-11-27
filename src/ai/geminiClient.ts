@@ -5,27 +5,66 @@ import {
   UmlElement,
 } from '../model/schema';
 import { generatePlantUml } from '../engines/plantuml/generator';
+import { parsePlantUml } from '../engines/plantuml/parser';
 
-export type AiModelId = 'gemini-3.5-flash-lite' | 'gemini-4-hydrogen';
+export type ConcreteAiModelId =
+  | 'gemini-4-hydrogen'
+  | 'gemini-3.8-flash'
+  | 'gemini-3.5-flash-lite';
 
-export const DEFAULT_AI_MODEL: AiModelId = 'gemini-3.5-flash-lite';
-export const FALLBACK_AI_MODEL: AiModelId = 'gemini-3.5-flash-lite';
+export type AiModelSelection = 'auto' | ConcreteAiModelId;
 
-export const AI_MODEL_OPTIONS: Array<{ id: AiModelId; label: string; description: string }> = [
+export const DEFAULT_AI_SELECTION: AiModelSelection = 'auto';
+
+/**
+ * Full automatic fallback cascade:
+ * 1. gemini-4-hydrogen
+ * 2. gemini-3.8-flash (on 429 / 503 / quota / model error)
+ * 3. gemini-3.5-flash-lite (on 429 / 503 / quota / model error)
+ */
+export const AUTO_FALLBACK_CHAIN: ConcreteAiModelId[] = [
+  'gemini-4-hydrogen',
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite',
+];
+
+/**
+ * Fast-path model for quick right-click micro-edits.
+ */
+export const QUICK_EDIT_MODEL: ConcreteAiModelId = 'gemini-3.5-flash-lite';
+
+export const AI_MODEL_OPTIONS: Array<{
+  id: AiModelSelection;
+  label: string;
+  description: string;
+}> = [
   {
-    id: 'gemini-3.5-flash-lite',
-    label: 'gemini-3.5-flash-lite (Recommandé)',
-    description: 'Rapide, fiable et économique — modèle par défaut',
+    id: 'auto',
+    label: 'Auto (Recommandé)',
+    description:
+      'gemini-4-hydrogen → gemini-3.8-flash → gemini-3.5-flash-lite (et 3.5-flash-lite pour retouches rapides)',
   },
   {
     id: 'gemini-4-hydrogen',
-    label: 'gemini-4-hydrogen',
-    description: 'Raisonnement avancé (bascule auto sur gemini-3.5-flash-lite si indisponible)',
+    label: 'gemini-4-hydrogen (Forcé)',
+    description: 'Modèle principal haute précision (sans bascule si forcé)',
+  },
+  {
+    id: 'gemini-3.8-flash',
+    label: 'gemini-3.8-flash (Forcé)',
+    description: 'Équilibre vitesse / qualité',
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    label: 'gemini-3.5-flash-lite (Forcé)',
+    description: 'Ultra rapide et très économique',
   },
 ];
 
-// Kept for backward compatibility with tests and references
-export const GEMINI_MODEL = DEFAULT_AI_MODEL;
+// Backward-compatible alias
+export type AiModelId = AiModelSelection;
+export const DEFAULT_AI_MODEL = DEFAULT_AI_SELECTION;
+export const GEMINI_MODEL = DEFAULT_AI_SELECTION;
 
 const LOCAL_STORAGE_KEY_API = 'bouml_v2_google_ai_studio_key';
 const LOCAL_STORAGE_KEY_MODEL = 'bouml_v2_selected_ai_model';
@@ -34,14 +73,21 @@ function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-export function loadSelectedModel(): AiModelId {
-  if (typeof window === 'undefined') return DEFAULT_AI_MODEL;
+export function loadSelectedModel(): AiModelSelection {
+  if (typeof window === 'undefined') return DEFAULT_AI_SELECTION;
   const saved = localStorage.getItem(LOCAL_STORAGE_KEY_MODEL);
-  if (saved === 'gemini-4-hydrogen' || saved === 'gemini-3.5-flash-lite') return saved;
-  return DEFAULT_AI_MODEL;
+  if (
+    saved === 'auto' ||
+    saved === 'gemini-4-hydrogen' ||
+    saved === 'gemini-3.8-flash' ||
+    saved === 'gemini-3.5-flash-lite'
+  ) {
+    return saved;
+  }
+  return DEFAULT_AI_SELECTION;
 }
 
-export function saveSelectedModel(model: AiModelId): void {
+export function saveSelectedModel(model: AiModelSelection): void {
   if (typeof window !== 'undefined') {
     localStorage.setItem(LOCAL_STORAGE_KEY_MODEL, model);
   }
@@ -69,15 +115,16 @@ export async function loadApiKey(): Promise<string> {
 
 interface RawGeminiCallOptions {
   apiKey: string;
-  model: AiModelId;
+  model: ConcreteAiModelId;
   systemInstruction: string;
   prompt: string;
 }
 
 export interface GeminiCallMeta {
   text: string;
-  modelUsed: AiModelId;
+  modelUsed: ConcreteAiModelId;
   usedFallback: boolean;
+  attemptedModels: ConcreteAiModelId[];
   fallbackReason?: string;
 }
 
@@ -118,7 +165,7 @@ async function callSingleModel(opts: RawGeminiCallOptions): Promise<string> {
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`Erreur Google AI Studio (${res.status}): ${errText}`);
+      throw new Error(`Erreur Google AI Studio (${opts.model} - ${res.status}): ${errText}`);
     }
 
     const data = (await res.json()) as {
@@ -135,13 +182,26 @@ async function callSingleModel(opts: RawGeminiCallOptions): Promise<string> {
 }
 
 /**
- * Calls the chosen AI model with automatic fallback:
- * If `hydrogen-4` fails (API error, timeout, quota, 503, unavailable),
- * automatically retries on `gemini-3.5-flash` and flags `usedFallback: true`.
+ * Resolves the ordered list of models to try for a given selection and task tier.
+ * - In 'auto' mode:
+ *     - quickEdit = true  => ['gemini-3.5-flash-lite']
+ *     - quickEdit = false => ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.5-flash-lite']
+ * - In forced manual mode => [preferredModel]
  */
+export function resolveModelChain(
+  selection: AiModelSelection,
+  quickEdit = false
+): ConcreteAiModelId[] {
+  if (selection === 'auto') {
+    return quickEdit ? [QUICK_EDIT_MODEL] : [...AUTO_FALLBACK_CHAIN];
+  }
+  return [selection];
+}
+
 export async function callGeminiWithFallback(opts: {
   apiKey: string;
-  preferredModel?: AiModelId;
+  preferredModel?: AiModelSelection;
+  quickEdit?: boolean;
   systemInstruction: string;
   prompt: string;
   caller?: (o: RawGeminiCallOptions) => Promise<string>;
@@ -152,40 +212,48 @@ export async function callGeminiWithFallback(opts: {
     );
   }
 
-  const primary = opts.preferredModel ?? loadSelectedModel();
+  const selection = opts.preferredModel ?? loadSelectedModel();
+  const chain = resolveModelChain(selection, Boolean(opts.quickEdit));
   const invokeFn = opts.caller ?? callSingleModel;
+  const attempted: ConcreteAiModelId[] = [];
+  let lastError: unknown;
 
-  try {
-    const text = await invokeFn({
-      apiKey: opts.apiKey,
-      model: primary,
-      systemInstruction: opts.systemInstruction,
-      prompt: opts.prompt,
-    });
-    return { text, modelUsed: primary, usedFallback: false };
-  } catch (err) {
-    if (primary === 'gemini-4-hydrogen') {
-      const reason = err instanceof Error ? err.message : String(err);
-      const fallbackText = await invokeFn({
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    attempted.push(model);
+    try {
+      const text = await invokeFn({
         apiKey: opts.apiKey,
-        model: FALLBACK_AI_MODEL,
+        model,
         systemInstruction: opts.systemInstruction,
         prompt: opts.prompt,
       });
       return {
-        text: fallbackText,
-        modelUsed: FALLBACK_AI_MODEL,
-        usedFallback: true,
-        fallbackReason: reason,
+        text,
+        modelUsed: model,
+        usedFallback: i > 0,
+        attemptedModels: attempted,
+        fallbackReason: i > 0 && lastError instanceof Error ? lastError.message : undefined,
       };
+    } catch (err) {
+      lastError = err;
+      // If invalid API key (401/403), don't waste fallback calls
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/401|403|API_KEY_INVALID|PERMISSION_DENIED/i.test(msg)) {
+        throw err;
+      }
+      // Otherwise continue to next model in the automatic fallback chain
     }
-    throw err;
   }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Tous les modèles IA configurés ont échoué.');
 }
 
 export async function testGeminiConnection(
   apiKey: string,
-  preferredModel?: AiModelId
+  preferredModel?: AiModelSelection
 ): Promise<{ ok: boolean; message: string; usedFallback?: boolean }> {
   try {
     const res = await callGeminiWithFallback({
@@ -194,7 +262,9 @@ export async function testGeminiConnection(
       systemInstruction: 'Réponds uniquement par "OK".',
       prompt: 'Ping de vérification BouML v2.',
     });
-    const fb = res.usedFallback ? ' (bascule automatique depuis gemini-4-hydrogen)' : '';
+    const fb = res.usedFallback
+      ? ` (bascule automatique après ${res.attemptedModels.slice(0, -1).join(' → ')})`
+      : '';
     return {
       ok: true,
       usedFallback: res.usedFallback,
@@ -208,18 +278,10 @@ export async function testGeminiConnection(
   }
 }
 
-/**
- * Ultra-low-token Spec-to-UML generator with strict cross-diagram coherence rules:
- * - Classes generated first with explicit public methods
- * - Sequence diagrams strictly reference existing classes/methods and use alt/else, opt, loop fragments
- * - UseCase diagrams group use cases in rectangle "Sous-Système" { ... } and enforce Extension ..> Base : <<extend>>
- * - State diagrams encapsulate each class state machine in state "ClassName" { ... } (never isolated class state node)
- * - Strictly English PlantUML modifiers: {static} (never {statique}), {abstract} (never {, })
- */
 export async function generateUmlFromSpec(
   apiKey: string,
   specText: string,
-  preferredModel?: AiModelId
+  preferredModel?: AiModelSelection
 ): Promise<GeminiCallMeta> {
   const systemInstruction = [
     'Tu es un compilateur de spécifications UML 2.5 pour BouML v2.',
@@ -236,6 +298,7 @@ export async function generateUmlFromSpec(
   return await callGeminiWithFallback({
     apiKey,
     preferredModel,
+    quickEdit: false,
     systemInstruction,
     prompt: specText,
   });
@@ -252,11 +315,8 @@ export type CopilotResult = (
   | { kind: 'plantuml'; plantUml: string; summary?: string }
   | { kind: 'test_class'; plantUml: string; bodies: Record<string, string> }
   | { kind: 'text'; text: string }
-) & { modelUsed: AiModelId; usedFallback: boolean };
+) & { modelUsed: ConcreteAiModelId; usedFallback: boolean };
 
-/**
- * Parses compact ===OP:<id_or_name>=== ... ===END=== blocks returned by AI.
- */
 export function parseMethodBodyBlocks(raw: string): Record<string, string> {
   const cleaned = raw.replace(/```[a-zA-Z0-9_+-]*\r?\n?/g, '').replace(/```/g, '');
   const bodies: Record<string, string> = {};
@@ -272,6 +332,21 @@ export function parseMethodBodyBlocks(raw: string): Record<string, string> {
   return bodies;
 }
 
+/**
+ * Extracts valid PlantUML even if the LLM omitted @startuml/@enduml wrappers.
+ */
+function extractApplicablePlantUml(raw: string, fallbackPackageId: string): string | null {
+  if (/@startuml[\s\S]*@enduml/i.test(raw)) {
+    return raw;
+  }
+  const stripped = raw.replace(/```(?:plantuml|puml|uml)?\r?\n?/gi, '').replace(/```/g, '').trim();
+  const testParsed = parsePlantUml(stripped, fallbackPackageId);
+  if (testParsed.elements.length > 0) {
+    return `@startuml\n${stripped}\n@enduml`;
+  }
+  return null;
+}
+
 export async function askGeminiCopilot(
   apiKey: string,
   action: CopilotAction,
@@ -280,8 +355,10 @@ export async function askGeminiCopilot(
   targetElement: UmlElement | null,
   language: TargetLanguage,
   customPrompt?: string,
-  preferredModel?: AiModelId
+  preferredModel?: AiModelSelection
 ): Promise<CopilotResult> {
+  const pkgId = project.packages[0]?.id ?? 'pkg_root';
+
   if (action === 'complete_bodies') {
     if (!targetElement || targetElement.operations.length === 0) {
       throw new Error('Sélectionnez une classe contenant au moins une méthode.');
@@ -300,6 +377,7 @@ export async function askGeminiCopilot(
     const res = await callGeminiWithFallback({
       apiKey,
       preferredModel,
+      quickEdit: true, // Uses gemini-3.5-flash-lite in Auto mode for fast right-click edits
       systemInstruction: [
         `Tu génères UNIQUEMENT les corps de méthodes en ${language} pour BouML v2.`,
         'Zéro texte explicatif, zéro signature de classe ou de fonction, zéro markdown.',
@@ -325,6 +403,7 @@ export async function askGeminiCopilot(
     const res = await callGeminiWithFallback({
       apiKey,
       preferredModel,
+      quickEdit: false,
       systemInstruction: [
         'Tu es un architecte UML 2.5 expert SOLID pour BouML v2.',
         'Analyse et corrige les violations SOLID directement dans le modèle.',
@@ -337,10 +416,11 @@ export async function askGeminiCopilot(
     });
 
     const summaryMatch = res.text.match(/^SUMMARY:\s*(.+)$/im);
-    if (/@startuml[\s\S]*@enduml/i.test(res.text)) {
+    const puml = extractApplicablePlantUml(res.text, pkgId);
+    if (puml) {
       return {
         kind: 'plantuml',
-        plantUml: res.text,
+        plantUml: puml,
         summary: summaryMatch?.[1]?.trim(),
         modelUsed: res.modelUsed,
         usedFallback: res.usedFallback,
@@ -364,6 +444,7 @@ export async function askGeminiCopilot(
     const res = await callGeminiWithFallback({
       apiKey,
       preferredModel,
+      quickEdit: true,
       systemInstruction: [
         `Tu génères une classe de tests unitaires UML + corps de tests en ${language} pour BouML v2.`,
         'Réponds STRICTEMENT avec ces 2 sections compactes, sans autre texte :',
@@ -378,10 +459,11 @@ export async function askGeminiCopilot(
     });
 
     const bodies = parseMethodBodyBlocks(res.text);
-    if (/@startuml[\s\S]*@enduml/i.test(res.text)) {
+    const puml = extractApplicablePlantUml(res.text, pkgId);
+    if (puml) {
       return {
         kind: 'test_class',
-        plantUml: res.text,
+        plantUml: puml,
         bodies,
         modelUsed: res.modelUsed,
         usedFallback: res.usedFallback,
@@ -390,24 +472,31 @@ export async function askGeminiCopilot(
     return { kind: 'text', text: res.text, modelUsed: res.modelUsed, usedFallback: res.usedFallback };
   }
 
-  // Custom prompt: modify current diagram cleanly without losing untouched elements
+  // Custom prompt ("Demande libre" in Modify Diagram tab):
+  // ALWAYS emits updated PlantUML so the diagram is modified directly on the canvas!
   const pumlContext = generatePlantUml(project, activeDiagramId);
-  const focus = targetElement ? `Élément sélectionné : ${targetElement.name}` : 'Diagramme actif complet';
+  const focus = targetElement ? `Élément ciblé : ${targetElement.name}` : 'Diagramme actif complet';
+  const isSmallSingleNodeEdit = Boolean(targetElement && (customPrompt?.length ?? 0) < 120);
+
   const res = await callGeminiWithFallback({
     apiKey,
     preferredModel,
+    quickEdit: isSmallSingleNodeEdit,
     systemInstruction: [
-      'Tu es l\'assistant UML 2.5 intégré à BouML v2.',
-      'Si la demande implique d\'ajouter, modifier ou supprimer des éléments sur le diagramme actuel, renvoie le bloc PlantUML COMPLET et mis à jour (@startuml ... @enduml) en CONSERVANT tous les éléments existants non concernés par la suppression. Utilise {static}, {abstract}, alt/else/opt/loop pour les séquences, rectangle "..." pour les sous-systèmes, et state "NomClasse" { ... } pour les états.',
-      'Si c\'est une pure question théorique sans modification demandée, réponds en français de manière concise.',
+      'Tu es l\'éditeur UML 2.5 automatique de BouML v2.',
+      'RÈGLE ABSOLUE : Tu dois APPLIQUER la modification demandée au diagramme actif et répondre UNIQUEMENT par le bloc PlantUML complet et mis à jour commençant par @startuml et finissant par @enduml.',
+      'INTERDICTION d\'écrire des phrases d\'explication ou de la prose.',
+      'Conserve TOUS les éléments et relations existants qui ne doivent pas être supprimés.',
+      'Syntaxe stricte : {static} (jamais {statique}), {abstract}, {const}, {readOnly}, alt/else/opt/loop pour les séquences, rectangle "..." pour les sous-systèmes, state "NomClasse" { ... } pour les états, Extension ..> CasDeBase : <<extend>>.',
     ].join('\n'),
-    prompt: `${customPrompt || 'Améliore ce modèle UML.'}\n\n${focus}\n\nDiagramme actif courant :\n${pumlContext}`,
+    prompt: `Modification demandée : ${customPrompt || 'Améliore ce modèle UML.'}\n${focus}\n\nDiagramme PlantUML actuel à modifier :\n${pumlContext}`,
   });
 
-  if (/@startuml[\s\S]*@enduml/i.test(res.text)) {
+  const puml = extractApplicablePlantUml(res.text, pkgId);
+  if (puml) {
     return {
       kind: 'plantuml',
-      plantUml: res.text,
+      plantUml: puml,
       modelUsed: res.modelUsed,
       usedFallback: res.usedFallback,
     };

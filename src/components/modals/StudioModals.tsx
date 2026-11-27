@@ -141,7 +141,7 @@ export const StudioModals: React.FC = () => {
       const res = await generateUmlFromSpec(key, specText, aiModel);
       if (res.usedFallback) {
         showToast(
-          'gemini-4-hydrogen indisponible — bascule automatique sur gemini-3.5-flash-lite.',
+          `Bascule automatique sur ${res.modelUsed} suite à une limite/erreur du modèle précédent.`,
           'info'
         );
       }
@@ -184,7 +184,7 @@ export const StudioModals: React.FC = () => {
 
       if (result.usedFallback) {
         showToast(
-          'gemini-4-hydrogen indisponible — bascule automatique sur gemini-3.5-flash-lite.',
+          `Bascule automatique sur ${result.modelUsed} suite à une limite/erreur du modèle précédent.`,
           'info'
         );
       }
@@ -361,10 +361,12 @@ export const StudioModals: React.FC = () => {
                   value={aiModel}
                   onChange={(e) => setAiModel(e.target.value as AiModelId)}
                   className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 font-mono text-[11px] text-indigo-300"
-                  title="Modèle IA (bascule auto vers gemini-3.5-flash-lite si gemini-4-hydrogen échoue)"
+                  title="Auto : gemini-4-hydrogen → gemini-3.8-flash → gemini-3.5-flash-lite (ou choix forcé)"
                 >
-                  <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
-                  <option value="gemini-4-hydrogen">gemini-4-hydrogen (auto-fallback)</option>
+                  <option value="auto">Auto (4-hydrogen → 3.8-flash → 3.5-lite)</option>
+                  <option value="gemini-4-hydrogen">gemini-4-hydrogen (Forcé)</option>
+                  <option value="gemini-3.8-flash">gemini-3.8-flash (Forcé)</option>
+                  <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Forcé)</option>
                 </select>
                 <button onClick={close} className="text-slate-400 hover:text-white cursor-pointer">
                   <X className="w-4 h-4" />

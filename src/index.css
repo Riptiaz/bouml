@@ -66,18 +66,21 @@ code {
   background: #475569;
 }
 
-/* ==================== GLOBAL LIGHT THEME ==================== */
+/* ==================== GLOBAL LIGHT THEME (HIGH CONTRAST WCAG AA/AAA) ==================== */
 html[data-theme="light"] body {
   background-color: #f8fafc;
   color: #0f172a;
 }
 
+/* Surfaces */
 html[data-theme="light"] .bg-slate-950,
 html[data-theme="light"] .bg-slate-950\/90,
 html[data-theme="light"] .bg-slate-950\/80,
+html[data-theme="light"] .bg-slate-950\/75,
+html[data-theme="light"] .bg-slate-950\/70,
 html[data-theme="light"] .bg-slate-950\/60,
 html[data-theme="light"] .bg-slate-950\/40 {
-  background-color: #f8fafc !important;
+  background-color: #f1f5f9 !important;
 }
 
 html[data-theme="light"] .bg-slate-900,
@@ -91,10 +94,50 @@ html[data-theme="light"] .bg-slate-800,
 html[data-theme="light"] .bg-slate-800\/80,
 html[data-theme="light"] .hover\:bg-slate-800:hover,
 html[data-theme="light"] .hover\:bg-slate-800\/80:hover,
-html[data-theme="light"] .hover\:bg-slate-800\/60:hover {
+html[data-theme="light"] .hover\:bg-slate-800\/60:hover,
+html[data-theme="light"] .hover\:bg-slate-700:hover {
   background-color: #e2e8f0 !important;
 }
 
+/* Colored subtle cards / alerts / export PNG card in Light mode */
+html[data-theme="light"] .bg-indigo-950,
+html[data-theme="light"] .bg-indigo-950\/50,
+html[data-theme="light"] .bg-indigo-950\/40,
+html[data-theme="light"] .bg-indigo-600\/20,
+html[data-theme="light"] .bg-indigo-600\/25,
+html[data-theme="light"] .bg-indigo-600\/30 {
+  background-color: #eef2ff !important;
+}
+
+html[data-theme="light"] .bg-emerald-950\/50,
+html[data-theme="light"] .bg-emerald-950\/70,
+html[data-theme="light"] .from-emerald-950\/70 {
+  background-color: #ecfdf5 !important;
+  background-image: none !important;
+}
+
+html[data-theme="light"] .bg-rose-950,
+html[data-theme="light"] .bg-rose-950\/60,
+html[data-theme="light"] .bg-rose-950\/50,
+html[data-theme="light"] .bg-rose-950\/40,
+html[data-theme="light"] .bg-rose-950\/30 {
+  background-color: #fff1f2 !important;
+}
+
+html[data-theme="light"] .bg-amber-950\/80,
+html[data-theme="light"] .bg-amber-950\/40 {
+  background-color: #fffbeb !important;
+}
+
+html[data-theme="light"] .bg-sky-950\/40 {
+  background-color: #f0f9ff !important;
+}
+
+html[data-theme="light"] .bg-violet-600\/25 {
+  background-color: #ede9fe !important;
+}
+
+/* Borders */
 html[data-theme="light"] .border-slate-800,
 html[data-theme="light"] .border-slate-800\/90,
 html[data-theme="light"] .border-slate-800\/80,
@@ -104,22 +147,20 @@ html[data-theme="light"] .border-slate-700\/80 {
   border-color: #cbd5e1 !important;
 }
 
+/* Primary & secondary text contrast */
 html[data-theme="light"] .text-white {
-  color: #0f172a;
-}
-html[data-theme="light"] .bg-gradient-to-r .text-white,
-html[data-theme="light"] .bg-indigo-600,
-html[data-theme="light"] .bg-indigo-600 .text-white,
-html[data-theme="light"] .bg-gradient-to-br {
-  color: #ffffff !important;
+  color: #0f172a !important;
 }
 
 html[data-theme="light"] .text-slate-100,
 html[data-theme="light"] .text-slate-200 {
-  color: #1e293b !important;
+  color: #0f172a !important;
 }
 
-html[data-theme="light"] .text-slate-300,
+html[data-theme="light"] .text-slate-300 {
+  color: #334155 !important;
+}
+
 html[data-theme="light"] .text-slate-400 {
   color: #475569 !important;
 }
@@ -129,31 +170,107 @@ html[data-theme="light"] .text-slate-600 {
   color: #64748b !important;
 }
 
+/* Accent text colors — darkened for crisp readability on light surfaces */
+html[data-theme="light"] .text-indigo-100,
 html[data-theme="light"] .text-indigo-200,
-html[data-theme="light"] .text-indigo-300 {
-  color: #4338ca !important;
+html[data-theme="light"] .text-indigo-300,
+html[data-theme="light"] .text-indigo-400 {
+  color: #3730a3 !important;
 }
 
+html[data-theme="light"] .text-emerald-100,
 html[data-theme="light"] .text-emerald-200,
 html[data-theme="light"] .text-emerald-200\/95,
-html[data-theme="light"] .text-emerald-300 {
-  color: #047857 !important;
+html[data-theme="light"] .text-emerald-300,
+html[data-theme="light"] .text-emerald-400,
+html[data-theme="light"] .text-emerald-400\/90 {
+  color: #065f46 !important;
 }
 
 html[data-theme="light"] .text-cyan-200,
-html[data-theme="light"] .text-cyan-300 {
-  color: #0e7490 !important;
+html[data-theme="light"] .text-cyan-300,
+html[data-theme="light"] .text-cyan-400 {
+  color: #155e75 !important;
 }
 
+html[data-theme="light"] .text-sky-200,
+html[data-theme="light"] .text-sky-300,
+html[data-theme="light"] .text-sky-400 {
+  color: #075985 !important;
+}
+
+html[data-theme="light"] .text-amber-100\/80,
 html[data-theme="light"] .text-amber-200,
-html[data-theme="light"] .text-amber-300 {
-  color: #b45309 !important;
+html[data-theme="light"] .text-amber-200\/90,
+html[data-theme="light"] .text-amber-300,
+html[data-theme="light"] .text-amber-400,
+html[data-theme="light"] .text-amber-400\/90 {
+  color: #92400e !important;
 }
 
 html[data-theme="light"] .text-violet-100,
 html[data-theme="light"] .text-violet-200,
-html[data-theme="light"] .text-violet-300 {
-  color: #6d28d9 !important;
+html[data-theme="light"] .text-violet-300,
+html[data-theme="light"] .text-violet-400 {
+  color: #5b21b6 !important;
+}
+
+html[data-theme="light"] .text-fuchsia-300,
+html[data-theme="light"] .text-fuchsia-400 {
+  color: #86198f !important;
+}
+
+html[data-theme="light"] .text-rose-100,
+html[data-theme="light"] .text-rose-200,
+html[data-theme="light"] .text-rose-300,
+html[data-theme="light"] .text-rose-400 {
+  color: #9f1239 !important;
+}
+
+/* Actor stick-figure stroke in Light mode */
+html[data-theme="light"] .stroke-sky-300 {
+  stroke: #0369a1 !important;
+}
+
+/* Solid dark-background buttons, badges & UML class headers MUST keep crisp white text */
+html[data-theme="light"] .bg-indigo-600,
+html[data-theme="light"] .bg-indigo-600 *,
+html[data-theme="light"] .bg-emerald-600,
+html[data-theme="light"] .bg-emerald-600 *,
+html[data-theme="light"] .bg-gradient-to-br,
+html[data-theme="light"] .bg-gradient-to-br *,
+html[data-theme="light"] .from-indigo-600,
+html[data-theme="light"] .from-indigo-600 *,
+html[data-theme="light"] .from-indigo-600\/90,
+html[data-theme="light"] .from-indigo-600\/90 *,
+html[data-theme="light"] .from-emerald-600\/90,
+html[data-theme="light"] .from-emerald-600\/90 *,
+html[data-theme="light"] .from-violet-600\/90,
+html[data-theme="light"] .from-violet-600\/90 *,
+html[data-theme="light"] .from-amber-600\/90,
+html[data-theme="light"] .from-amber-600\/90 *,
+html[data-theme="light"] .from-slate-600\/90,
+html[data-theme="light"] .from-slate-600\/90 *,
+html[data-theme="light"] .from-cyan-600\/90,
+html[data-theme="light"] .from-cyan-600\/90 *,
+html[data-theme="light"] .from-teal-600\/90,
+html[data-theme="light"] .from-teal-600\/90 *,
+html[data-theme="light"] .from-sky-600\/90,
+html[data-theme="light"] .from-sky-600\/90 *,
+html[data-theme="light"] .from-blue-600\/90,
+html[data-theme="light"] .from-blue-600\/90 *,
+html[data-theme="light"] .from-fuchsia-600\/90,
+html[data-theme="light"] .from-fuchsia-600\/90 *,
+html[data-theme="light"] .hover\:bg-indigo-600\/80:hover,
+html[data-theme="light"] .hover\:bg-indigo-600\/80:hover *,
+html[data-theme="light"] .hover\:bg-indigo-600:hover,
+html[data-theme="light"] .hover\:bg-indigo-600:hover * {
+  color: #ffffff !important;
+}
+
+/* Modal backdrop stays subtle dark scrim even in light mode */
+html[data-theme="light"] .fixed.inset-0.bg-slate-950\/75 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
 }
 
 html[data-theme="light"] .react-flow__controls {

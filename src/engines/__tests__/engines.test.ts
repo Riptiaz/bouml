@@ -12,32 +12,49 @@ import {
 import { importUniversalFile } from '../importers';
 import { exportHtmlDocumentation } from '../exporters/htmlDoc';
 import { exportXmi2 } from '../exporters/xmiExporter';
-import { DEFAULT_AI_MODEL, GEMINI_MODEL, callGeminiWithFallback } from '../../ai/geminiClient';
+import {
+  DEFAULT_AI_MODEL,
+  callGeminiWithFallback,
+  resolveModelChain,
+} from '../../ai/geminiClient';
 import { computeElkLayout, SEQUENCE_LIFELINE_Y } from '../layout/elkLayout';
 
 describe('BouML v2 Core Engines', () => {
-  it('defaults to gemini-3.5-flash-lite and falls back automatically from gemini-4-hydrogen', async () => {
-    expect(DEFAULT_AI_MODEL).toBe('gemini-3.5-flash-lite');
-    expect(GEMINI_MODEL).toBe('gemini-3.5-flash-lite');
+  it('defaults to Auto mode with 3-tier fallback (4-hydrogen -> 3.8-flash -> 3.5-flash-lite) and quickEdit fast path', async () => {
+    expect(DEFAULT_AI_MODEL).toBe('auto');
+    expect(resolveModelChain('auto', false)).toEqual([
+      'gemini-4-hydrogen',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+    ]);
+    expect(resolveModelChain('auto', true)).toEqual(['gemini-3.5-flash-lite']);
+    expect(resolveModelChain('gemini-3.8-flash', false)).toEqual(['gemini-3.8-flash']);
 
     const calledModels: string[] = [];
     const res = await callGeminiWithFallback({
       apiKey: 'test-key',
-      preferredModel: 'gemini-4-hydrogen',
+      preferredModel: 'auto',
       systemInstruction: 'sys',
       prompt: 'hi',
       caller: async (o) => {
         calledModels.push(o.model);
         if (o.model === 'gemini-4-hydrogen') {
-          throw new Error('503 Service Unavailable');
+          throw new Error('429 Too Many Requests');
         }
-        return 'OK_FALLBACK';
+        if (o.model === 'gemini-3.8-flash') {
+          throw new Error('429 Too Many Requests');
+        }
+        return 'OK_LITE_FALLBACK';
       },
     });
-    expect(calledModels).toEqual(['gemini-4-hydrogen', 'gemini-3.5-flash-lite']);
+    expect(calledModels).toEqual([
+      'gemini-4-hydrogen',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+    ]);
     expect(res.usedFallback).toBe(true);
     expect(res.modelUsed).toBe('gemini-3.5-flash-lite');
-    expect(res.text).toBe('OK_FALLBACK');
+    expect(res.text).toBe('OK_LITE_FALLBACK');
   });
 
   it('generates and parses PlantUML bidirectionally', () => {
