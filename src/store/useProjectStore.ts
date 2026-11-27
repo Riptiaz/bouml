@@ -17,9 +17,8 @@ import { createDemoProject } from '../model/defaults';
 import { validateProject } from '../model/validator';
 import { applyDesignPattern, DesignPatternKind, generateGettersSetters } from '../model/patterns';
 import { computeElkLayout } from '../engines/layout/elkLayout';
-import { parsePlantUml } from '../engines/plantuml/parser';
+import { parsePlantUml, parsePlantUmlBlocks } from '../engines/plantuml/parser';
 import { importUniversalFile } from '../engines/importers';
-import { AiGeneratedUmlPayload } from '../ai/structuredSchema';
 
 export interface ContextMenuState {
   x: number;
@@ -105,7 +104,7 @@ interface ProjectStore {
   // Sync & Imports
   applyPlantUmlToActiveDiagram: (pumlSource: string) => Promise<void>;
   importFiles: (files: Array<{ name: string; content: string }>) => Promise<void>;
-  applyAiGeneratedModel: (payload: AiGeneratedUmlPayload) => Promise<void>;
+  applyAiPlantUml: (rawPlantUml: string) => Promise<void>;
 }
 
 const initialProject = createDemoProject();
@@ -751,148 +750,94 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     get().showToast(`${allElements.length} éléments importés et mis en page automatiquement.`, 'success');
   },
 
-  applyAiGeneratedModel: async (payload) => {
-    const rootPkgId = createId('pkg');
-    const packages = [
-      { id: rootPkgId, parentId: null as string | null, name: payload.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '_'), namespace: payload.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '.') },
-      ...(payload.packages ?? []).map((p) => ({
-        id: createId('pkg'),
-        parentId: rootPkgId,
-        name: p.name,
-        namespace: p.name,
-        description: p.description,
-      })),
-    ];
+  applyAiPlantUml: async (rawPlantUml) => {
+    const state = get();
+    const existingRootPkg = state.project.packages[0];
+    const rootPkgId = existingRootPkg?.id ?? createId('pkg');
+    const blocks = parsePlantUmlBlocks(rawPlantUml, rootPkgId);
 
-    const pkgByName = new Map(packages.map((p) => [p.name.toLowerCase(), p.id]));
-    const elements: Record<string, UmlElement> = {};
-    const elByName = new Map<string, UmlElement>();
-
-    for (const raw of payload.elements) {
-      const id = createId('el');
-      const pkgId = (raw.packageName && pkgByName.get(raw.packageName.toLowerCase())) || rootPkgId;
-      const el: UmlElement = {
-        id,
-        packageId: pkgId,
-        kind: (raw.kind as ElementKind) || 'class',
-        name: raw.name,
-        stereotype: raw.stereotype,
-        description: raw.description,
-        taggedValues: {},
-        visibility: 'public',
-        isAbstract: raw.kind === 'interface' || raw.kind === 'abstract_class',
-        enumLiterals: raw.enumLiterals,
-        attributes: (raw.attributes ?? []).map((a) => ({
-          id: createId('att'),
-          name: a.name,
-          type: a.type,
-          visibility: a.visibility || 'private',
-          isStatic: a.isStatic,
-          isReadOnly: a.isReadOnly,
-        })),
-        operations: (raw.operations ?? []).map((o) => ({
-          id: createId('op'),
-          name: o.name,
-          returnType: o.returnType || 'void',
-          visibility: o.visibility || 'public',
-          isStatic: o.isStatic,
-          isAbstract: o.isAbstract,
-          parameters: (o.parameters ?? []).map((p) => ({
-            id: createId('p'),
-            name: p.name,
-            type: p.type,
-          })),
-        })),
-      };
-      elements[id] = el;
-      elByName.set(el.name.toLowerCase(), el);
+    if (blocks.length === 0) {
+      throw new Error(
+        'Aucun élément UML valide n\'a pu être extrait de la réponse Gemini 4 Hydrogen.'
+      );
     }
 
-    const relations: Record<string, UmlRelation> = {};
-    for (const r of payload.relations) {
-      const src = elByName.get(r.sourceName.toLowerCase());
-      const tgt = elByName.get(r.targetName.toLowerCase());
-      if (!src || !tgt) continue;
-      const id = createId('rel');
-      relations[id] = {
-        id,
-        kind: (r.kind as RelationKind) || 'directional_association',
-        sourceId: src.id,
-        targetId: tgt.id,
-        label: r.label,
-        sourceMultiplicity: r.sourceMultiplicity,
-        targetMultiplicity: r.targetMultiplicity,
-        targetRole: r.targetRole,
-        sequenceOrder: r.sequenceOrder,
-      };
-    }
+    const firstTitle =
+      blocks[0].title ||
+      blocks[0].elements[0]?.name ||
+      state.project.name ||
+      'Modèle UML';
 
-    const diagrams: Record<string, UmlDiagram> = {};
-    const classEls = Object.values(elements).filter((e) =>
-      ['class', 'interface', 'abstract_class', 'enum', 'struct', 'record'].includes(e.kind)
-    );
-    const usecaseEls = Object.values(elements).filter((e) => ['actor', 'usecase'].includes(e.kind));
-    const seqEls = Object.values(elements).filter((e) => ['lifeline', 'actor'].includes(e.kind));
+    const packages = existingRootPkg
+      ? [...state.project.packages]
+      : [
+          {
+            id: rootPkgId,
+            parentId: null as string | null,
+            name: firstTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'app',
+            namespace: firstTitle.toLowerCase().replace(/[^a-z0-9]+/g, '.') || 'app',
+          },
+        ];
 
-    const classDiagId = createId('diag');
-    const classIdSet = new Set(classEls.map((e) => e.id));
-    diagrams[classDiagId] = {
-      id: classDiagId,
-      packageId: rootPkgId,
-      name: `${payload.projectName} — Classes`,
-      kind: 'class',
-      layoutDirection: 'DOWN',
-      nodes: classEls.map((e, i) => ({ elementId: e.id, x: (i % 4) * 280, y: Math.floor(i / 4) * 220 })),
-      relationIds: Object.values(relations)
-        .filter((r) => classIdSet.has(r.sourceId) && classIdSet.has(r.targetId))
-        .map((r) => r.id),
-    };
+    const isProjectEmpty = Object.keys(state.project.elements).length === 0;
+    const nextElements: Record<string, UmlElement> = isProjectEmpty ? {} : { ...state.project.elements };
+    const nextRelations: Record<string, UmlRelation> = isProjectEmpty ? {} : { ...state.project.relations };
+    const nextDiagrams: Record<string, UmlDiagram> = isProjectEmpty ? {} : { ...state.project.diagrams };
 
-    if (usecaseEls.length > 0) {
-      const ucDiagId = createId('diag');
-      const ucSet = new Set(usecaseEls.map((e) => e.id));
-      diagrams[ucDiagId] = {
-        id: ucDiagId,
+    let firstDiagId = '';
+    let firstElementId: string | null = null;
+    let totalElements = 0;
+
+    for (let i = 0; i < blocks.length; i++) {
+      const blk = blocks[i];
+      const diagId = createId('diag');
+      if (!firstDiagId) firstDiagId = diagId;
+
+      const nodes = blk.elements.map((el, idx) => {
+        nextElements[el.id] = el;
+        if (!firstElementId) firstElementId = el.id;
+        totalElements++;
+        return {
+          elementId: el.id,
+          x: 80 + (idx % 4) * 300,
+          y: 80 + Math.floor(idx / 4) * 240,
+        };
+      });
+
+      const relationIds = blk.relations.map((r) => {
+        nextRelations[r.id] = r;
+        return r.id;
+      });
+
+      nextDiagrams[diagId] = {
+        id: diagId,
         packageId: rootPkgId,
-        name: `${payload.projectName} — Cas d'utilisation`,
-        kind: 'usecase',
-        layoutDirection: 'RIGHT',
-        nodes: usecaseEls.map((e, i) => ({ elementId: e.id, x: (i % 3) * 260, y: Math.floor(i / 3) * 160 })),
-        relationIds: Object.values(relations)
-          .filter((r) => ucSet.has(r.sourceId) && ucSet.has(r.targetId))
-          .map((r) => r.id),
-      };
-    }
-
-    const seqRels = Object.values(relations).filter((r) => r.kind === 'message');
-    if (seqEls.length > 0 && seqRels.length > 0) {
-      const seqDiagId = createId('diag');
-      diagrams[seqDiagId] = {
-        id: seqDiagId,
-        packageId: rootPkgId,
-        name: `${payload.projectName} — Séquence`,
-        kind: 'sequence',
-        layoutDirection: 'RIGHT',
-        nodes: seqEls.map((e, i) => ({ elementId: e.id, x: i * 240, y: 80 })),
-        relationIds: seqRels.map((r) => r.id),
+        name: blk.title || (blocks.length === 1 ? firstTitle : `${firstTitle} (${i + 1})`),
+        kind: blk.diagramKind,
+        layoutDirection: blk.diagramKind === 'state' || blk.diagramKind === 'usecase' ? 'RIGHT' : 'DOWN',
+        nodes,
+        relationIds,
       };
     }
 
     set((s) => ({
       ...commitProject(s, {
         ...s.project,
-        name: payload.projectName,
-        description: payload.summary ?? s.project.description,
+        name: isProjectEmpty ? firstTitle : s.project.name,
         packages,
-        elements,
-        relations,
-        diagrams,
+        elements: nextElements,
+        relations: nextRelations,
+        diagrams: nextDiagrams,
       }),
-      activeDiagramId: classDiagId,
-      selectedElementId: classEls[0]?.id ?? null,
+      activeDiagramId: firstDiagId,
+      selectedElementId: firstElementId,
+      selectedRelationId: null,
     }));
 
-    await get().runAutoLayout('DOWN');
-    get().showToast(`Modèle "${payload.projectName}" généré par Gemini 4 Hydrogen !`, 'success');
+    await get().runAutoLayout();
+    get().showToast(
+      `${totalElements} élément(s) modélisé(s) par Gemini 4 Hydrogen !`,
+      'success'
+    );
   },
 }));

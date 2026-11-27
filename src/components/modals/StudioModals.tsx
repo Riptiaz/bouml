@@ -35,7 +35,7 @@ export const StudioModals: React.FC = () => {
     targetLanguage,
     issues,
     selectElement,
-    applyAiGeneratedModel,
+    applyAiPlantUml,
     copilotContext,
     showToast,
   } = useProjectStore();
@@ -124,8 +124,8 @@ export const StudioModals: React.FC = () => {
     }
     setGeneratingSpec(true);
     try {
-      const payload = await generateUmlFromSpec(key, specText);
-      await applyAiGeneratedModel(payload);
+      const plantUmlText = await generateUmlFromSpec(key, specText);
+      await applyAiPlantUml(plantUmlText);
       close();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 'error');

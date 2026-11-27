@@ -85,7 +85,8 @@ function renderClassMemberBlock(el: UmlElement): string[] {
       .map((p) => `${p.name}: ${p.type}${p.defaultValue ? ` = ${p.defaultValue}` : ''}`)
       .join(', ');
     const ret = op.returnType ? ` : ${op.returnType}` : '';
-    lines.push(`  ${mods.join(' ')}${mods.length ? ' ' : ''}${vis}${op.name}(${params})${ret}`);
+    const cnst = op.isConst ? ' {const}' : '';
+    lines.push(`  ${mods.join(' ')}${mods.length ? ' ' : ''}${vis}${op.name}(${params})${ret}${cnst}`);
   }
 
   lines.push('}');

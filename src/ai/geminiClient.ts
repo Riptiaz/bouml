@@ -4,10 +4,6 @@ import {
   TargetLanguage,
   UmlElement,
 } from '../model/schema';
-import {
-  AiGeneratedUmlPayload,
-  SPEC_TO_UML_RESPONSE_SCHEMA,
-} from './structuredSchema';
 import { generatePlantUml } from '../engines/plantuml/generator';
 
 /**
@@ -45,7 +41,6 @@ interface GeminiRequestOptions {
   apiKey: string;
   systemInstruction: string;
   prompt: string;
-  responseSchema?: Record<string, unknown>;
 }
 
 async function callGemini4Hydrogen(opts: GeminiRequestOptions): Promise<string> {
@@ -66,13 +61,7 @@ async function callGemini4Hydrogen(opts: GeminiRequestOptions): Promise<string> 
       },
     ],
     generationConfig: {
-      temperature: 0.2,
-      ...(opts.responseSchema
-        ? {
-            responseMimeType: 'application/json',
-            responseSchema: opts.responseSchema,
-          }
-        : {}),
+      temperature: 0.1,
     },
   };
 
@@ -127,19 +116,33 @@ export async function testGeminiConnection(apiKey: string): Promise<{ ok: boolea
   }
 }
 
+/**
+ * Ultra-low-token Spec-to-UML generator:
+ * Asks gemini-4-hydrogen to emit ONLY compact, lossless PlantUML (@startuml...@enduml).
+ * BouML v2 transparently parses and lays it out on the canvas without exposing raw syntax to the user.
+ */
 export async function generateUmlFromSpec(
   apiKey: string,
   specText: string
-): Promise<AiGeneratedUmlPayload> {
-  const raw = await callGemini4Hydrogen({
-    apiKey,
-    systemInstruction:
-      'Tu es un Architecte Logiciel Principal expert UML 2.5 et DDD. À partir du cahier des charges fourni, génère un modèle UML complet, cohérent et prêt pour la génération de code : classes typées, interfaces, énumérations, acteurs/cas d\'utilisation, relations avec cardinalités précises et messages de séquence si pertinent.',
-    prompt: `Analyse ce cahier des charges et produis le modèle UML JSON structuré :\n\n${specText}`,
-    responseSchema: SPEC_TO_UML_RESPONSE_SCHEMA,
-  });
+): Promise<string> {
+  const systemInstruction = [
+    'Tu es un compilateur de spécifications UML 2.5 pour BouML v2.',
+    'RÈGLE ABSOLUE : Réponds UNIQUEMENT par un ou plusieurs blocs PlantUML valides (@startuml ... @enduml). Zéro texte explicatif, zéro markdown, zéro tutoriel, même si le cahier des charges en demande.',
+    'Format compact obligatoire pour consommer un minimum de tokens tout en préservant 100 % des détails :',
+    '- Ajoute "title <NomCourt>" en début de chaque bloc.',
+    '- Utilise des stéréotypes courts uniquement si pertinents (ex: <<Entity>>, <<Service>>, <<DTO>>). Ne jamais inventer de longs stéréotypes.',
+    '- Syntaxe attributs : -nom : type {readOnly} {static}',
+    '- Syntaxe méthodes : +nom(param1 : type1, param2 : type2) : typeRetour {const} {static} {abstract}',
+    '- Constructeurs : +NomClasse(param1 : type1)',
+    '- Relations avec cardinalités : ClasseA "1" *-- "0..*" ClasseB : label',
+    '- Inclus TOUS les attributs, constructeurs, getters, setters, méthodes métier, modificateurs ({const}, {readOnly}, {static}, {abstract}) et relations demandés.',
+  ].join('\n');
 
-  return JSON.parse(raw) as AiGeneratedUmlPayload;
+  return await callGemini4Hydrogen({
+    apiKey,
+    systemInstruction,
+    prompt: specText,
+  });
 }
 
 export type CopilotAction =

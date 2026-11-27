@@ -187,7 +187,7 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
       {/* Header */}
       <div className={`px-3 py-2 bg-gradient-to-r ${headerGradient} border-b text-center`}>
         {stereoBadge && (
-          <div className="text-[10px] tracking-wide text-white/80 font-medium">
+          <div className="text-[10px] tracking-wide text-white/80 font-medium truncate max-w-[300px] mx-auto" title={`«${stereoBadge}»`}>
             «{stereoBadge}»
           </div>
         )}
@@ -254,7 +254,10 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
                   <span className="text-indigo-400 mr-1">{VISIBILITY_SYMBOLS[att.visibility]}</span>
                   {att.name}
                 </span>
-                <span className="text-slate-400 shrink-0">: {att.type}</span>
+                <span className="text-slate-400 shrink-0">
+                  : {att.type}
+                  {att.isReadOnly && <span className="text-amber-400/90 ml-1 text-[10px]">{'{ro}'}</span>}
+                </span>
               </div>
             ))
           )}
@@ -278,9 +281,10 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
                   <span className="text-sky-400 mr-1">{VISIBILITY_SYMBOLS[op.visibility]}</span>
                   {op.name}({op.parameters.map((p) => `${p.name}: ${p.type}`).join(', ')})
                 </span>
-                {op.returnType && (
-                  <span className="text-slate-400 shrink-0">: {op.returnType}</span>
-                )}
+                <span className="text-slate-400 shrink-0">
+                  {op.returnType ? `: ${op.returnType}` : ''}
+                  {op.isConst && <span className="text-emerald-400/90 ml-1 text-[10px]">const</span>}
+                </span>
               </div>
             ))
           )}

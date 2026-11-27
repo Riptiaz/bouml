@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -37,6 +37,14 @@ export const UmlCanvas: React.FC = () => {
   const [quickLinkRelId, setQuickLinkRelId] = useState<string | null>(null);
 
   const diagram = project.diagrams[activeDiagramId];
+
+  useEffect(() => {
+    if (!rfInstance || !diagram || diagram.nodes.length === 0) return;
+    const t = setTimeout(() => {
+      rfInstance.fitView({ padding: 0.25, duration: 250 });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [rfInstance, activeDiagramId, diagram?.nodes.length]);
 
   const nodes: Node[] = useMemo(() => {
     if (!diagram) return [];

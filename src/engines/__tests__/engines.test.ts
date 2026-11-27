@@ -130,4 +130,56 @@ describe('BouML v2 Core Engines', () => {
     expect(xmi).toContain('xmi:version="2.1"');
     expect(xmi).toContain('name="Order"');
   });
+
+  it('parses AI compact PlantUML for Boisson with all attributes, constructor, const methods, and C++ codegen', () => {
+    const boissonPuml = `@startuml
+title Boisson
+class Boisson <<Entity>> {
+  -nom : string {readOnly}
+  -prix : int
+  -quantite : int
+  +Boisson(nom : string, prix : int, quantite : int)
+  +getNom() : string {const}
+  +getPrix() : int {const}
+  +getQuantite() : int {const}
+  +setPrix(nouveauPrix : int) : bool
+  +setQuantite(nouvelleQuantite : int) : bool
+  +estDisponible() : bool {const}
+  +vendre() : bool
+  +reapprovisionner(ajout : int) : bool
+  +afficher() : void {const}
+}
+@enduml`;
+
+    const parsed = parsePlantUml(boissonPuml, 'pkg_1');
+    expect(parsed.title).toBe('Boisson');
+    expect(parsed.elements).toHaveLength(1);
+
+    const boisson = parsed.elements[0];
+    expect(boisson.name).toBe('Boisson');
+    expect(boisson.stereotype).toBe('Entity');
+    expect(boisson.attributes).toHaveLength(3);
+    expect(boisson.attributes[0]).toMatchObject({ name: 'nom', type: 'string', visibility: 'private', isReadOnly: true });
+    expect(boisson.operations).toHaveLength(10);
+
+    const ctor = boisson.operations.find((o) => o.name === 'Boisson');
+    expect(ctor?.returnType).toBe('');
+    expect(ctor?.parameters).toHaveLength(3);
+
+    const getNom = boisson.operations.find((o) => o.name === 'getNom');
+    expect(getNom?.isConst).toBe(true);
+    expect(getNom?.returnType).toBe('string');
+
+    const afficher = boisson.operations.find((o) => o.name === 'afficher');
+    expect(afficher?.isConst).toBe(true);
+
+    // Verify C++ header generation matches exact const & constructor signature
+    const proj = createDemoProject();
+    proj.elements[boisson.id] = boisson;
+    const cppFiles = generateElementCode(proj, boisson, 'cpp');
+    expect(cppFiles[0].content).toContain('const std::string nom;');
+    expect(cppFiles[0].content).toContain('Boisson(std::string nom, int prix, int quantite);');
+    expect(cppFiles[0].content).toContain('std::string getNom() const;');
+    expect(cppFiles[0].content).toContain('void afficher() const;');
+  });
 });
