@@ -6,21 +6,21 @@ import {
 } from '../model/schema';
 import { generatePlantUml } from '../engines/plantuml/generator';
 
-export type AiModelId = 'gemini-3.5-flash' | 'hydrogen-4';
+export type AiModelId = 'gemini-3.5-flash-lite' | 'gemini-4-hydrogen';
 
-export const DEFAULT_AI_MODEL: AiModelId = 'gemini-3.5-flash';
-export const FALLBACK_AI_MODEL: AiModelId = 'gemini-3.5-flash';
+export const DEFAULT_AI_MODEL: AiModelId = 'gemini-3.5-flash-lite';
+export const FALLBACK_AI_MODEL: AiModelId = 'gemini-3.5-flash-lite';
 
 export const AI_MODEL_OPTIONS: Array<{ id: AiModelId; label: string; description: string }> = [
   {
-    id: 'gemini-3.5-flash',
-    label: 'gemini-3.5-flash (Recommandé)',
+    id: 'gemini-3.5-flash-lite',
+    label: 'gemini-3.5-flash-lite (Recommandé)',
     description: 'Rapide, fiable et économique — modèle par défaut',
   },
   {
-    id: 'hydrogen-4',
-    label: 'hydrogen-4',
-    description: 'Raisonnement avancé (bascule auto sur gemini-3.5-flash si indisponible)',
+    id: 'gemini-4-hydrogen',
+    label: 'gemini-4-hydrogen',
+    description: 'Raisonnement avancé (bascule auto sur gemini-3.5-flash-lite si indisponible)',
   },
 ];
 
@@ -37,7 +37,7 @@ function isTauriRuntime(): boolean {
 export function loadSelectedModel(): AiModelId {
   if (typeof window === 'undefined') return DEFAULT_AI_MODEL;
   const saved = localStorage.getItem(LOCAL_STORAGE_KEY_MODEL);
-  if (saved === 'hydrogen-4' || saved === 'gemini-3.5-flash') return saved;
+  if (saved === 'gemini-4-hydrogen' || saved === 'gemini-3.5-flash-lite') return saved;
   return DEFAULT_AI_MODEL;
 }
 
@@ -164,7 +164,7 @@ export async function callGeminiWithFallback(opts: {
     });
     return { text, modelUsed: primary, usedFallback: false };
   } catch (err) {
-    if (primary === 'hydrogen-4') {
+    if (primary === 'gemini-4-hydrogen') {
       const reason = err instanceof Error ? err.message : String(err);
       const fallbackText = await invokeFn({
         apiKey: opts.apiKey,
@@ -194,7 +194,7 @@ export async function testGeminiConnection(
       systemInstruction: 'Réponds uniquement par "OK".',
       prompt: 'Ping de vérification BouML v2.',
     });
-    const fb = res.usedFallback ? ' (bascule automatique depuis hydrogen-4)' : '';
+    const fb = res.usedFallback ? ' (bascule automatique depuis gemini-4-hydrogen)' : '';
     return {
       ok: true,
       usedFallback: res.usedFallback,

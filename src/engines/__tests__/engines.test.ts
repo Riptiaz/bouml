@@ -16,27 +16,27 @@ import { DEFAULT_AI_MODEL, GEMINI_MODEL, callGeminiWithFallback } from '../../ai
 import { computeElkLayout, SEQUENCE_LIFELINE_Y } from '../layout/elkLayout';
 
 describe('BouML v2 Core Engines', () => {
-  it('defaults to gemini-3.5-flash and falls back automatically from hydrogen-4', async () => {
-    expect(DEFAULT_AI_MODEL).toBe('gemini-3.5-flash');
-    expect(GEMINI_MODEL).toBe('gemini-3.5-flash');
+  it('defaults to gemini-3.5-flash-lite and falls back automatically from gemini-4-hydrogen', async () => {
+    expect(DEFAULT_AI_MODEL).toBe('gemini-3.5-flash-lite');
+    expect(GEMINI_MODEL).toBe('gemini-3.5-flash-lite');
 
     const calledModels: string[] = [];
     const res = await callGeminiWithFallback({
       apiKey: 'test-key',
-      preferredModel: 'hydrogen-4',
+      preferredModel: 'gemini-4-hydrogen',
       systemInstruction: 'sys',
       prompt: 'hi',
       caller: async (o) => {
         calledModels.push(o.model);
-        if (o.model === 'hydrogen-4') {
+        if (o.model === 'gemini-4-hydrogen') {
           throw new Error('503 Service Unavailable');
         }
         return 'OK_FALLBACK';
       },
     });
-    expect(calledModels).toEqual(['hydrogen-4', 'gemini-3.5-flash']);
+    expect(calledModels).toEqual(['gemini-4-hydrogen', 'gemini-3.5-flash-lite']);
     expect(res.usedFallback).toBe(true);
-    expect(res.modelUsed).toBe('gemini-3.5-flash');
+    expect(res.modelUsed).toBe('gemini-3.5-flash-lite');
     expect(res.text).toBe('OK_FALLBACK');
   });
 

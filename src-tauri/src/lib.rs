@@ -69,10 +69,10 @@ async fn ai_generate_content(
     api_key: String,
     payload_json: String,
 ) -> Result<String, String> {
-    let allowed = ["gemini-3.5-flash", "hydrogen-4"];
+    let allowed = ["gemini-3.5-flash-lite", "gemini-4-hydrogen"];
     if !allowed.contains(&model.as_str()) {
         return Err(format!(
-            "Modèle non autorisé: {}. Modèles supportés : gemini-3.5-flash, hydrogen-4.",
+            "Modèle non autorisé: {}. Modèles supportés : gemini-3.5-flash-lite, gemini-4-hydrogen.",
             model
         ));
     }
@@ -89,7 +89,7 @@ async fn ai_generate_content(
         .map_err(|e| e.to_string())?;
 
     let mut last_err = String::new();
-    let max_attempts = if model == "hydrogen-4" { 1 } else { 2 };
+    let max_attempts = if model == "gemini-4-hydrogen" { 1 } else { 2 };
 
     for attempt in 0..max_attempts {
         let resp = client
