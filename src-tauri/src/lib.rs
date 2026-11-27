@@ -69,48 +69,59 @@ async fn ai_generate_content(
     api_key: String,
     payload_json: String,
 ) -> Result<String, String> {
-    // Enforce exclusive gemini-4-hydrogen model policy
-    if model != "gemini-4-hydrogen" {
+    // Enforce exclusive gemini-3.5-flash-lite model policy
+    if model != "gemini-3.5-flash-lite" {
         return Err(format!(
-            "Modèle non autorisé: {}. Seul gemini-4-hydrogen via Google AI Studio est autorisé.",
+            "Modèle non autorisé: {}. Seul gemini-3.5-flash-lite via Google AI Studio est autorisé.",
             model
         ));
     }
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent?key={}",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={}",
         api_key.trim()
     );
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .body(payload_json)
-        .send()
-        .await
-        .map_err(|e| format!("Erreur réseau Google AI Studio: {}", e))?;
+    let mut last_err = String::new();
 
-    let status = resp.status();
-    let body_text = resp.text().await.map_err(|e| e.to_string())?;
+    for attempt in 0..3 {
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(payload_json.clone())
+            .send()
+            .await
+            .map_err(|e| format!("Erreur réseau Google AI Studio: {}", e))?;
 
-    if !status.is_success() {
-        return Err(format!("Erreur Google AI Studio ({}): {}", status, body_text));
+        let status = resp.status();
+        let body_text = resp.text().await.map_err(|e| e.to_string())?;
+
+        if status.is_success() {
+            let parsed: GeminiResponse = serde_json::from_str(&body_text)
+                .map_err(|e| format!("Réponse JSON invalide: {}", e))?;
+
+            let text = parsed
+                .candidates
+                .and_then(|c| c.into_iter().next())
+                .and_then(|c| c.content)
+                .and_then(|c| c.parts)
+                .and_then(|p| p.into_iter().next())
+                .and_then(|p| p.text)
+                .ok_or_else(|| "Réponse vide renvoyée par gemini-3.5-flash-lite.".to_string())?;
+
+            return Ok(text);
+        }
+
+        last_err = format!("Erreur Google AI Studio ({}): {}", status, body_text);
+        if (status.as_u16() == 503 || status.as_u16() == 429) && attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(800 * (attempt + 1) as u64));
+            continue;
+        }
+        return Err(last_err);
     }
 
-    let parsed: GeminiResponse =
-        serde_json::from_str(&body_text).map_err(|e| format!("Réponse JSON invalide: {}", e))?;
-
-    let text = parsed
-        .candidates
-        .and_then(|c| c.into_iter().next())
-        .and_then(|c| c.content)
-        .and_then(|c| c.parts)
-        .and_then(|p| p.into_iter().next())
-        .and_then(|p| p.text)
-        .ok_or_else(|| "Réponse vide renvoyée par gemini-4-hydrogen.".to_string())?;
-
-    Ok(text)
+    Err(last_err)
 }
 
 #[derive(Serialize, Deserialize)]

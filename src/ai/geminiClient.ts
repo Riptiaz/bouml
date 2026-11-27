@@ -7,9 +7,9 @@ import {
 import { generatePlantUml } from '../engines/plantuml/generator';
 
 /**
- * Exclusive Google AI Studio model required by specification.
+ * Exclusive Google AI Studio model configured for BouML v2.
  */
-export const GEMINI_MODEL = 'gemini-4-hydrogen';
+export const GEMINI_MODEL = 'gemini-3.5-flash-lite';
 const GOOGLE_AI_STUDIO_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const LOCAL_STORAGE_FALLBACK_KEY = 'bouml_v2_google_ai_studio_key';
 
@@ -92,7 +92,7 @@ async function callGemini4Hydrogen(opts: GeminiRequestOptions): Promise<string> 
   };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
-    throw new Error('Réponse vide renvoyée par gemini-4-hydrogen.');
+    throw new Error('Réponse vide renvoyée par gemini-3.5-flash-lite.');
   }
   return text;
 }

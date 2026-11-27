@@ -15,8 +15,8 @@ import { exportXmi2 } from '../exporters/xmiExporter';
 import { GEMINI_MODEL } from '../../ai/geminiClient';
 
 describe('BouML v2 Core Engines', () => {
-  it('enforces exclusive gemini-4-hydrogen model policy', () => {
-    expect(GEMINI_MODEL).toBe('gemini-4-hydrogen');
+  it('enforces exclusive gemini-3.5-flash-lite model policy', () => {
+    expect(GEMINI_MODEL).toBe('gemini-3.5-flash-lite');
   });
 
   it('generates and parses PlantUML bidirectionally', () => {

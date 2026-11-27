@@ -124,7 +124,7 @@ export function validateProject(project: BoumlProject): ValidationIssue[] {
         code: 'SOLID-SRP',
         message: `La classe "${el.name}" comporte ${el.attributes.length + el.operations.length} membres (risque de violation du principe SRP).`,
         elementId: el.id,
-        suggestion: 'Demandez à Gemini 4 Hydrogen de proposer un découpage SOLID.',
+        suggestion: 'Demandez à Gemini 3.5 Flash Lite de proposer un découpage SOLID.',
       });
     }
   }

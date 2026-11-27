@@ -350,7 +350,7 @@ export const StudioModals: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-fuchsia-400" />
                 <h2 className="text-sm font-bold text-white">
-                  Copilote Gemini 4 Hydrogen
+                  Copilote Gemini 3.5 Flash Lite
                   {copilotContext?.elementId && project.elements[copilotContext.elementId]
                     ? ` — ${project.elements[copilotContext.elementId].name}`
                     : ''}

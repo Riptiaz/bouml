@@ -760,7 +760,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     if (blocks.length === 0) {
       throw new Error(
-        'Aucun élément UML valide n\'a pu être extrait de la réponse Gemini 4 Hydrogen.'
+        'Aucun élément UML valide n\'a pu être extrait de la réponse Gemini 3.5 Flash Lite.'
       );
     }
 
@@ -838,7 +838,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     await get().runAutoLayout();
     get().showToast(
-      `${totalElements} élément(s) modélisé(s) par Gemini 4 Hydrogen !`,
+      `${totalElements} élément(s) modélisé(s) par Gemini 3.5 Flash Lite !`,
       'success'
     );
   },

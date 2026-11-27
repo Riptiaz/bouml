@@ -197,7 +197,7 @@ export const ContextMenu: React.FC = () => {
             Générer le code maintenant
           </button>
 
-          <div className={sectionCls}>Gemini 4 Hydrogen (IA)</div>
+          <div className={sectionCls}>Gemini 3.5 Flash Lite (IA)</div>
           <button
             className={itemCls}
             onClick={() => openCopilot(targetEl.id, 'complete_bodies')}
@@ -338,7 +338,7 @@ export const ContextMenu: React.FC = () => {
             onClick={() => openCopilot(undefined, 'audit_solid')}
           >
             <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" />
-            Demander à Gemini 4 Hydrogen...
+            Demander à Gemini 3.5 Flash Lite...
           </button>
         </>
       )}
