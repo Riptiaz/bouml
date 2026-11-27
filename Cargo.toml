@@ -9,6 +9,9 @@ members = [
     "crates/bouml-rpc",
     "crates/bouml-cli",
 ]
+exclude = [
+    "apps/desktop/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"
