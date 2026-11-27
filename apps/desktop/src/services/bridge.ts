@@ -309,6 +309,192 @@ export async function validateProjectModel(project: Project): Promise<Diagnostic
   return diags;
 }
 
+export type AiProviderKind = "ollama" | "openai" | "anthropic";
+
+export interface AiClientOptions {
+  provider: AiProviderKind;
+  model: string;
+  apiKey?: string;
+  host?: string;
+}
+
+export interface AiRunResult {
+  project: Project;
+  summary: string;
+  classifiersCreated: number;
+  relationsCreated: number;
+}
+
+interface RustPatchReport {
+  summary: string;
+  classifiers_created: number;
+  relations_created: number;
+}
+
+/**
+ * Runs the Text-to-UML pipeline via Tauri Rust `bouml-ai` (Structured Outputs),
+ * or applies an instant smart local extraction in standalone browser preview mode.
+ */
+export async function runAiTextToUml(
+  project: Project,
+  spec: string,
+  opts: AiClientOptions
+): Promise<AiRunResult> {
+  if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const [updated, report] = await invoke<[Project, RustPatchReport]>("ai_text_to_uml", {
+      provider: opts.provider,
+      model: opts.model,
+      apiKey: opts.apiKey ?? null,
+      host: opts.host ?? null,
+      spec,
+    });
+    return {
+      project: updated,
+      summary: report.summary,
+      classifiersCreated: report.classifiers_created,
+      relationsCreated: report.relations_created,
+    };
+  }
+
+  return applyBrowserHeuristicAi(project, spec, "Text-to-UML");
+}
+
+/**
+ * Runs conversational architecture refactoring via Tauri Rust `bouml-ai`,
+ * or applies a smart local preview mutation in browser mode.
+ */
+export async function runAiRefactor(
+  project: Project,
+  prompt: string,
+  opts: AiClientOptions
+): Promise<AiRunResult> {
+  if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const [updated, report] = await invoke<[Project, RustPatchReport]>("ai_refactor", {
+      provider: opts.provider,
+      model: opts.model,
+      apiKey: opts.apiKey ?? null,
+      host: opts.host ?? null,
+      prompt,
+    });
+    return {
+      project: updated,
+      summary: report.summary,
+      classifiersCreated: report.classifiers_created,
+      relationsCreated: report.relations_created,
+    };
+  }
+
+  return applyBrowserHeuristicAi(project, prompt, "Refactoring");
+}
+
+function applyBrowserHeuristicAi(
+  project: Project,
+  text: string,
+  modeLabel: string
+): AiRunResult {
+  const pkgId =
+    Object.values(project.packages).find((p) => p.parent_id !== null)?.id ??
+    project.root_package_id;
+
+  // Extract PascalCase entity names mentioned in the prompt/spec.
+  const matches = Array.from(new Set(text.match(/\b[A-Z][a-zA-Z0-9]{2,}\b/g) ?? [])).filter(
+    (w) => !["Ajoute", "Pattern", "Strategy", "UML", "SOLID", "Une", "Les"].includes(w)
+  );
+  const existingNames = new Set(Object.values(project.classifiers).map((c) => c.name));
+  const toCreate = matches.filter((m) => !existingNames.has(m));
+  if (toCreate.length === 0) {
+    toCreate.push("GeneratedService");
+  }
+
+  const nextClassifiers = { ...project.classifiers };
+  const nextRelations = { ...project.relations };
+  const pkg = project.packages[pkgId];
+  const nextPkgClassifiers = pkg ? [...pkg.classifiers] : [];
+
+  const createdIds: string[] = [];
+  for (const name of toCreate.slice(0, 4)) {
+    const id = `clf_ai_${name.toLowerCase()}_${Date.now().toString(36)}`;
+    const isIface =
+      name.endsWith("Repository") ||
+      name.endsWith("Sender") ||
+      name.endsWith("Interface") ||
+      name.endsWith("Strategy");
+    nextClassifiers[id] = {
+      id,
+      name,
+      package_id: pkgId,
+      kind: isIface ? "interface" : "class",
+      visibility: "public",
+      is_abstract: isIface,
+      properties: isIface
+        ? []
+        : [
+            {
+              id: `prop_${id}`,
+              name: "id",
+              visibility: "private",
+              type_ref: { kind: "external", value: "string" },
+              multiplicity: { lower: 1, upper: 1 },
+            },
+          ],
+      operations: [
+        {
+          id: `op_${id}`,
+          name: "execute",
+          visibility: "public",
+          is_abstract: isIface,
+          params: [],
+          return_type: { kind: "external", value: "void" },
+        },
+      ],
+      literals: [],
+    };
+    nextPkgClassifiers.push(id);
+    createdIds.push(id);
+  }
+
+  let relCount = 0;
+  const anchor = Object.values(project.classifiers)[0];
+  if (anchor && createdIds.length > 0) {
+    const relId = `rel_ai_${Date.now().toString(36)}`;
+    nextRelations[relId] = {
+      id: relId,
+      kind: "dependency",
+      source: {
+        classifier_id: anchor.id,
+        visibility: "public",
+        multiplicity: { lower: 1, upper: 1 },
+        is_navigable: true,
+      },
+      target: {
+        classifier_id: createdIds[0],
+        visibility: "public",
+        multiplicity: { lower: 1, upper: 1 },
+        is_navigable: true,
+      },
+    };
+    relCount += 1;
+  }
+
+  const updatedProject: Project = {
+    ...project,
+    packages: pkg
+      ? { ...project.packages, [pkgId]: { ...pkg, classifiers: nextPkgClassifiers } }
+      : project.packages,
+    classifiers: nextClassifiers,
+    relations: nextRelations,
+  };
+
+  return {
+    project: updatedProject,
+    summary: `${modeLabel} appliqué : ${toCreate.slice(0, 4).join(", ")}`,
+    classifiersCreated: createdIds.length,
+    relationsCreated: relCount,
+  };
+}
+
 function renderBrowserPreview(
   project: Project,
   clf: Classifier,

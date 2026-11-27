@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use bouml_ai::{
+    apply_uml_patch, refactor_with_instruction, text_to_uml, AiProviderConfig, HttpLlmClient,
+    PatchApplyReport, UmlGraphPatch,
+};
 use bouml_codegen::{
     generate_project, preview_classifier, GenerateOptions, GeneratedFile, GenerationReport,
     TargetLanguage,
@@ -171,6 +175,95 @@ fn import_legacy_bouml_prj(
     Ok(report.project)
 }
 
+fn build_ai_provider(
+    provider: &str,
+    model: &str,
+    api_key: Option<String>,
+    host: Option<String>,
+) -> Result<AiProviderConfig, String> {
+    match provider.to_ascii_lowercase().as_str() {
+        "openai" => {
+            let key = api_key
+                .filter(|k| !k.trim().is_empty())
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                .ok_or_else(|| "OpenAI API key is required".to_string())?;
+            Ok(AiProviderConfig::openai(key, model))
+        }
+        "anthropic" => {
+            let key = api_key
+                .filter(|k| !k.trim().is_empty())
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                .ok_or_else(|| "Anthropic API key is required".to_string())?;
+            Ok(AiProviderConfig::anthropic(key, model))
+        }
+        "ollama" => Ok(AiProviderConfig::Ollama {
+            host: host
+                .filter(|h| !h.trim().is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:11434".to_string()),
+            model: model.to_string(),
+        }),
+        other => Err(format!("Unsupported AI provider '{other}'")),
+    }
+}
+
+#[tauri::command]
+fn ai_text_to_uml(
+    provider: String,
+    model: String,
+    api_key: Option<String>,
+    host: Option<String>,
+    spec: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(Project, PatchApplyReport), String> {
+    let cfg = build_ai_provider(&provider, &model, api_key, host)?;
+    let client = HttpLlmClient::new(cfg);
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let AppState {
+        ref mut project,
+        ref mut history,
+        ..
+    } = *guard;
+    let report = text_to_uml(&client, project, history, &spec).map_err(|e| e.to_string())?;
+    Ok((project.clone(), report))
+}
+
+#[tauri::command]
+fn ai_refactor(
+    provider: String,
+    model: String,
+    api_key: Option<String>,
+    host: Option<String>,
+    prompt: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(Project, PatchApplyReport), String> {
+    let cfg = build_ai_provider(&provider, &model, api_key, host)?;
+    let client = HttpLlmClient::new(cfg);
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let AppState {
+        ref mut project,
+        ref mut history,
+        ..
+    } = *guard;
+    let report =
+        refactor_with_instruction(&client, project, history, &prompt).map_err(|e| e.to_string())?;
+    Ok((project.clone(), report))
+}
+
+#[tauri::command]
+fn ai_apply_patch(
+    patch: UmlGraphPatch,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(Project, PatchApplyReport), String> {
+    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let AppState {
+        ref mut project,
+        ref mut history,
+        ..
+    } = *guard;
+    let report = apply_uml_patch(project, history, &patch).map_err(|e| e.to_string())?;
+    Ok((project.clone(), report))
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Mutex::new(AppState::default()))
@@ -186,6 +279,9 @@ fn main() {
             generate_code_to_dir,
             import_source_path,
             import_legacy_bouml_prj,
+            ai_text_to_uml,
+            ai_refactor,
+            ai_apply_patch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BouML Next desktop application");

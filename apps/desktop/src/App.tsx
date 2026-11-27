@@ -13,11 +13,13 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  Code2,
   Command as CommandIcon,
   Grid,
   LayoutGrid,
   Moon,
   Plus,
+  Sparkles,
   Sun,
   Upload,
 } from "lucide-react";
@@ -25,6 +27,7 @@ import {
   UmlClassifierNode,
   type UmlClassifierFlowNode,
 } from "./components/UmlClassifierNode";
+import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CodePreviewPanel } from "./components/CodePreviewPanel";
 import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
@@ -80,13 +83,15 @@ function relationToEdge(rel: Relation): Edge {
 
 export const App: React.FC = () => {
   const [project, setProject] = useState<Project>(() => createStarterProject());
+  const [undoStack, setUndoStack] = useState<Project[]>([]);
+  const [rightTab, setRightTab] = useState<"ai" | "code">("ai");
   const [selectedId, setSelectedId] = useState<string | null>("clf_payment_processor");
   const [language, setLanguage] = useState<TargetLanguage>("rust");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
-  const [statusMsg, setStatusMsg] = useState<string>("Ready — ELK Auto-Layout active");
+  const [statusMsg, setStatusMsg] = useState<string>("Ready — ELK Auto-Layout & AI Copilot active");
 
   const [nodes, setNodes, onNodesChange] = useNodesState<UmlClassifierFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -107,6 +112,24 @@ export const App: React.FC = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const commitProject = useCallback((next: Project, msg: string) => {
+    setProject((prev) => {
+      setUndoStack((stack) => [...stack.slice(-19), prev]);
+      return next;
+    });
+    setStatusMsg(msg);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    setUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const previous = stack[stack.length - 1];
+      setProject(previous);
+      setStatusMsg("Undid last change");
+      return stack.slice(0, -1);
+    });
+  }, []);
+
   const handleAddInlineMember = useCallback((classifierId: string, rawInput: string) => {
     const parsed = parseInlineMember(rawInput);
     if (!parsed) return;
@@ -114,6 +137,7 @@ export const App: React.FC = () => {
     setProject((prev) => {
       const target = prev.classifiers[classifierId];
       if (!target) return prev;
+      setUndoStack((stack) => [...stack.slice(-19), prev]);
       const updated: Classifier =
         parsed.kind === "property"
           ? { ...target, properties: [...target.properties, parsed.property] }
@@ -147,23 +171,21 @@ export const App: React.FC = () => {
         literals: kind === "enumeration" ? [{ name: "VALUE_1" }] : [],
       };
 
-      setProject((prev) => {
-        const pkg = prev.packages[pkgId];
-        return {
-          ...prev,
-          packages: pkg
-            ? {
-                ...prev.packages,
-                [pkgId]: { ...pkg, classifiers: [...pkg.classifiers, id] },
-              }
-            : prev.packages,
-          classifiers: { ...prev.classifiers, [id]: clf },
-        };
-      });
+      const pkg = project.packages[pkgId];
+      const next: Project = {
+        ...project,
+        packages: pkg
+          ? {
+              ...project.packages,
+              [pkgId]: { ...pkg, classifiers: [...pkg.classifiers, id] },
+            }
+          : project.packages,
+        classifiers: { ...project.classifiers, [id]: clf },
+      };
+      commitProject(next, `Created ${kind} '${clf.name}'`);
       setSelectedId(id);
-      setStatusMsg(`Created ${kind} '${clf.name}'`);
     },
-    [project.classifiers, project.packages, project.root_package_id]
+    [commitProject, project]
   );
 
   // Sync Project -> XYFlow Nodes & Edges + run ELKjs Auto-Layout
@@ -195,6 +217,18 @@ export const App: React.FC = () => {
   const paletteActions: PaletteAction[] = useMemo(
     () => [
       {
+        id: "open-ai",
+        category: "AI",
+        label: "Open AI Copilot (Text-to-UML & Refactoring)",
+        run: () => setRightTab("ai"),
+      },
+      {
+        id: "open-code",
+        category: "Codegen",
+        label: "Open Live Code Preview Panel",
+        run: () => setRightTab("code"),
+      },
+      {
         id: "add-class",
         category: "Model",
         label: "Add UML Class",
@@ -223,6 +257,12 @@ export const App: React.FC = () => {
         },
       },
       {
+        id: "undo",
+        category: "Edit",
+        label: "Undo Last Change",
+        run: handleUndo,
+      },
+      {
         id: "toggle-theme",
         category: "View",
         label: `Switch to ${theme === "dark" ? "Light" : "Dark"} Theme`,
@@ -240,10 +280,13 @@ export const App: React.FC = () => {
         id: `lang-${lang}`,
         category: "Codegen",
         label: `Preview Code in ${lang.toUpperCase()}`,
-        run: () => setLanguage(lang),
+        run: () => {
+          setLanguage(lang);
+          setRightTab("code");
+        },
       })),
     ],
-    [handleAddClassifier, project, rebuildAndLayout, snapToGrid, theme]
+    [handleAddClassifier, handleUndo, project, rebuildAndLayout, snapToGrid, theme]
   );
 
   const handleDropFiles = async (e: React.DragEvent) => {
@@ -296,6 +339,13 @@ export const App: React.FC = () => {
             title="Toggle Magnetic Snap Grid"
           >
             <Grid size={14} /> Grid
+          </button>
+          <button
+            className={`toolbar-btn ${rightTab === "ai" ? "active" : ""}`}
+            onClick={() => setRightTab(rightTab === "ai" ? "code" : "ai")}
+            title="Toggle AI Copilot"
+          >
+            <Sparkles size={14} /> AI Copilot
           </button>
         </div>
 
@@ -357,12 +407,37 @@ export const App: React.FC = () => {
           </div>
         </main>
 
-        <CodePreviewPanel
-          project={project}
-          selectedClassifierId={selectedId}
-          language={language}
-          onLanguageChange={setLanguage}
-        />
+        <div className="right-drawer">
+          <div className="drawer-tabs">
+            <button
+              className={`drawer-tab ${rightTab === "ai" ? "active" : ""}`}
+              onClick={() => setRightTab("ai")}
+            >
+              <Sparkles size={14} /> AI Copilot
+            </button>
+            <button
+              className={`drawer-tab ${rightTab === "code" ? "active" : ""}`}
+              onClick={() => setRightTab("code")}
+            >
+              <Code2 size={14} /> Live Code
+            </button>
+          </div>
+          {rightTab === "ai" ? (
+            <AiAssistantPanel
+              project={project}
+              canUndo={undoStack.length > 0}
+              onProjectUpdated={(next, summary) => commitProject(next, `AI: ${summary}`)}
+              onUndo={handleUndo}
+            />
+          ) : (
+            <CodePreviewPanel
+              project={project}
+              selectedClassifierId={selectedId}
+              language={language}
+              onLanguageChange={setLanguage}
+            />
+          )}
+        </div>
       </div>
 
       <CommandPalette

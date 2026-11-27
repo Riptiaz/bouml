@@ -9,6 +9,7 @@ description = "Tauri v2 native desktop host bridging BouML Next Rust core engine
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+bouml-ai = { path = "../../../crates/bouml-ai" }
 bouml-codegen = { path = "../../../crates/bouml-codegen" }
 bouml-core = { path = "../../../crates/bouml-core" }
 bouml-importers = { path = "../../../crates/bouml-importers" }
