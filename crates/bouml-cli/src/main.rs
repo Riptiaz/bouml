@@ -1,3 +1,7 @@
+use bouml_ai::{
+    apply_uml_patch, refactor_with_instruction, text_to_uml, uml_graph_patch_json_schema,
+    AiProviderConfig, HttpLlmClient, UmlGraphPatch,
+};
 use bouml_codegen::{
     generate_project, roundtrip_bodies_from_dir, GenerateOptions, TargetLanguage,
 };
@@ -7,6 +11,7 @@ use bouml_core::{
 };
 use bouml_importers::{import_path, ImportFormat};
 use bouml_persistence::{import_legacy_prj, load_project, save_project};
+use bouml_rpc::RpcServer;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
 use std::path::PathBuf;
@@ -139,6 +144,52 @@ enum Commands {
         /// Optional custom name for the auto-generated diagram
         #[arg(long)]
         diagram_name: Option<String>,
+    },
+    /// Export the strict JSON Schema for AI Structured Outputs (`UmlGraphPatch`)
+    AiSchema {
+        /// Optional output file (prints to stdout if omitted)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Validate and atomically apply a `UmlGraphPatch` JSON file to a `.bouml/` project
+    AiApply {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
+        /// Path to the JSON patch file
+        patch_file: PathBuf,
+    },
+    /// Text-to-UML: generate UML 2.5 diagrams & model from a natural-language specification
+    AiGenerate {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
+        /// LLM provider: openai, anthropic, or ollama
+        #[arg(long, default_value = "ollama")]
+        provider: String,
+        /// Model name (e.g. gpt-4o, claude-3-5-sonnet-latest, qwen2.5-coder:14b)
+        #[arg(long)]
+        model: String,
+        /// Specification text or path to a markdown/text spec file
+        #[arg(long)]
+        spec: String,
+    },
+    /// Conversational architecture refactoring on an existing `.bouml/` project
+    AiRefactor {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
+        /// LLM provider: openai, anthropic, or ollama
+        #[arg(long, default_value = "ollama")]
+        provider: String,
+        /// Model name
+        #[arg(long)]
+        model: String,
+        /// Refactoring instruction (e.g. "Add Strategy pattern on PaymentProcessor")
+        #[arg(long)]
+        prompt: String,
+    },
+    /// Start the JSON-RPC 2.0 / MCP stdio server on a `.bouml/` project
+    Rpc {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
     },
 }
 
@@ -357,5 +408,105 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Commands::AiSchema { out } => {
+            let schema_json = serde_json::to_string_pretty(&uml_graph_patch_json_schema())?;
+            match out {
+                Some(path) => {
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(&path, schema_json)?;
+                    println!("Exported UmlGraphPatch JSON Schema to {}", path.display());
+                }
+                None => println!("{schema_json}"),
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::AiApply { dir, patch_file } => {
+            let raw = fs::read_to_string(&patch_file)?;
+            let patch: UmlGraphPatch = serde_json::from_str(&raw)?;
+            let mut project = load_project(&dir)?;
+            let mut history = CommandHistory::new();
+            let report = apply_uml_patch(&mut project, &mut history, &patch)?;
+            save_project(&project, &dir)?;
+            println!(
+                "Applied AI patch: {} (+{} classifiers, +{} relations, +{} interactions, +{} state machines, +{} diagrams)",
+                report.summary,
+                report.classifiers_created,
+                report.relations_created,
+                report.interactions_created,
+                report.state_machines_created,
+                report.diagrams_created
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::AiGenerate {
+            dir,
+            provider,
+            model,
+            spec,
+        } => {
+            let client = HttpLlmClient::new(build_provider(&provider, &model)?);
+            let spec_text = if PathBuf::from(&spec).is_file() {
+                fs::read_to_string(&spec)?
+            } else {
+                spec
+            };
+            let mut project = load_project(&dir)?;
+            let mut history = CommandHistory::new();
+            let report = text_to_uml(&client, &mut project, &mut history, &spec_text)?;
+            save_project(&project, &dir)?;
+            println!(
+                "AI Text-to-UML complete: {} (+{} classifiers, +{} relations, +{} diagrams)",
+                report.summary,
+                report.classifiers_created,
+                report.relations_created,
+                report.diagrams_created
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::AiRefactor {
+            dir,
+            provider,
+            model,
+            prompt,
+        } => {
+            let client = HttpLlmClient::new(build_provider(&provider, &model)?);
+            let mut project = load_project(&dir)?;
+            let mut history = CommandHistory::new();
+            let report = refactor_with_instruction(&client, &mut project, &mut history, &prompt)?;
+            save_project(&project, &dir)?;
+            println!(
+                "AI Refactoring applied: {} (+{} classifiers, +{} relations, +{} diagrams)",
+                report.summary,
+                report.classifiers_created,
+                report.relations_created,
+                report.diagrams_created
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Rpc { dir } => {
+            let project = load_project(&dir)?;
+            let mut server = RpcServer::new(project, Some(dir));
+            server.serve_stdio()?;
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn build_provider(provider: &str, model: &str) -> Result<AiProviderConfig, Box<dyn std::error::Error>> {
+    match provider.to_ascii_lowercase().as_str() {
+        "openai" => {
+            let key = std::env::var("OPENAI_API_KEY")
+                .map_err(|_| "OPENAI_API_KEY environment variable is required for openai provider")?;
+            Ok(AiProviderConfig::openai(key, model))
+        }
+        "anthropic" => {
+            let key = std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| "ANTHROPIC_API_KEY environment variable is required for anthropic provider")?;
+            Ok(AiProviderConfig::anthropic(key, model))
+        }
+        "ollama" => Ok(AiProviderConfig::ollama(model)),
+        other => Err(format!("unsupported provider '{other}' (use openai, anthropic, or ollama)").into()),
     }
 }

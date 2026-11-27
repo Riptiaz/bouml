@@ -1,0 +1,394 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "PatchClassifier": {
+      "properties": {
+        "comment": {
+          "default": "",
+          "type": "string"
+        },
+        "is_abstract": {
+          "default": false,
+          "type": "boolean"
+        },
+        "kind": {
+          "default": "class",
+          "description": "One of: class, interface, enumeration, data_type, actor, component, use_case",
+          "type": "string"
+        },
+        "literals": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "operations": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/PatchOperation"
+          },
+          "type": "array"
+        },
+        "package": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "properties": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/PatchProperty"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "PatchDiagram": {
+      "properties": {
+        "elements": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "default": "class",
+          "description": "One of: class, sequence, use_case, state_machine, activity, component",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "PatchInteraction": {
+      "properties": {
+        "lifelines": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/definitions/PatchMessage"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "package": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "lifelines",
+        "messages",
+        "name"
+      ],
+      "type": "object"
+    },
+    "PatchMessage": {
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "sort": {
+          "default": "sync_call",
+          "description": "One of: sync_call, async_call, reply, create, delete",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "label",
+        "to"
+      ],
+      "type": "object"
+    },
+    "PatchOperation": {
+      "properties": {
+        "bodies": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Optional AI-generated method bodies keyed by language (e.g. \"rust\", \"python\", \"typescript\", \"cpp\").",
+          "type": "object"
+        },
+        "is_abstract": {
+          "default": false,
+          "type": "boolean"
+        },
+        "is_static": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/PatchParameter"
+          },
+          "type": "array"
+        },
+        "return_type": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visibility": {
+          "default": "public",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "PatchPackage": {
+      "properties": {
+        "comment": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "PatchParameter": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "PatchProperty": {
+      "properties": {
+        "multiplicity": {
+          "default": "1",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "visibility": {
+          "default": "private",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "PatchRelation": {
+      "properties": {
+        "kind": {
+          "description": "One of: generalization, interface_realization, association, aggregation, composition, dependency, include, extend",
+          "type": "string"
+        },
+        "multiplicity": {
+          "default": "1",
+          "type": "string"
+        },
+        "role_name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "target"
+      ],
+      "type": "object"
+    },
+    "PatchStateMachine": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "package": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "states": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transitions": {
+          "items": {
+            "$ref": "#/definitions/PatchTransition"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "states",
+        "transitions"
+      ],
+      "type": "object"
+    },
+    "PatchTransition": {
+      "properties": {
+        "effect": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "guard": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "type": "string"
+        },
+        "trigger": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Strictly schema-validated intermediate UML 2.5 graph produced by LLMs (Structured Outputs). Supports Text-to-UML generation and conversational architecture refactoring across Class, Sequence, Use Case, and State Machine diagrams.",
+  "properties": {
+    "classifiers": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/PatchClassifier"
+      },
+      "type": "array"
+    },
+    "diagrams": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/PatchDiagram"
+      },
+      "type": "array"
+    },
+    "interactions": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/PatchInteraction"
+      },
+      "type": "array"
+    },
+    "packages": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/PatchPackage"
+      },
+      "type": "array"
+    },
+    "relations": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/PatchRelation"
+      },
+      "type": "array"
+    },
+    "state_machines": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/PatchStateMachine"
+      },
+      "type": "array"
+    },
+    "summary": {
+      "description": "Human-readable summary of the generated or refactored architecture.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "summary"
+  ],
+  "title": "UmlGraphPatch",
+  "type": "object"
+}

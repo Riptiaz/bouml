@@ -10,9 +10,11 @@ name = "bouml"
 path = "src/main.rs"
 
 [dependencies]
+bouml-ai = { path = "../bouml-ai" }
 bouml-codegen = { path = "../bouml-codegen" }
 bouml-core = { path = "../bouml-core" }
 bouml-importers = { path = "../bouml-importers" }
 bouml-persistence = { path = "../bouml-persistence" }
+bouml-rpc = { path = "../bouml-rpc" }
 clap.workspace = true
 serde_json.workspace = true
