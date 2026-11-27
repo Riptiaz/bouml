@@ -5,6 +5,7 @@ use bouml_core::{
     validate_project, Classifier, ClassifierKind, Command, CommandHistory, Diagram, DiagramKind,
     Package, Project, Severity,
 };
+use bouml_importers::{import_path, ImportFormat};
 use bouml_persistence::{import_legacy_prj, load_project, save_project};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
@@ -125,6 +126,19 @@ enum Commands {
         /// Source directory containing files with BouML preserved-body markers
         #[arg(short, long)]
         src: PathBuf,
+    },
+    /// Universal importer (Tree-sitter code, PlantUML, Mermaid, SQL DDL, OpenAPI, JSON Schema, XMI)
+    Import {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
+        /// Source file or directory to import
+        source: PathBuf,
+        /// Format override (auto, code, plantuml, mermaid, sql, openapi, json-schema, xmi)
+        #[arg(short, long, default_value = "auto")]
+        format: String,
+        /// Optional custom name for the auto-generated diagram
+        #[arg(long)]
+        diagram_name: Option<String>,
     },
 }
 
@@ -316,6 +330,31 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 report.bodies_updated,
                 report.bodies_unchanged
             );
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Import {
+            dir,
+            source,
+            format,
+            diagram_name,
+        } => {
+            let fmt: ImportFormat = format.parse()?;
+            let mut project = load_project(&dir)?;
+            let summary = import_path(&mut project, &source, fmt, diagram_name.as_deref())?;
+            save_project(&project, &dir)?;
+            println!(
+                "Imported '{}' into '{}': +{} packages, +{} classifiers ({} updated), +{} relations, +{} auto-layout diagram(s)",
+                summary.source_label,
+                project.name,
+                summary.packages_added,
+                summary.classifiers_added,
+                summary.classifiers_updated,
+                summary.relations_added,
+                summary.diagrams_created
+            );
+            for w in &summary.warnings {
+                eprintln!("  warning: {w}");
+            }
             Ok(ExitCode::SUCCESS)
         }
     }

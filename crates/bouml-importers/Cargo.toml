@@ -1,0 +1,25 @@
+[package]
+name = "bouml-importers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Universal UML importers: Tree-sitter multi-language code reverse-engineering, PlantUML, Mermaid, SQL DDL, OpenAPI, JSON Schema, and XMI 2.1/2.5"
+
+[dependencies]
+bouml-core = { path = "../bouml-core" }
+quick-xml = "0.37"
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tree-sitter = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-php = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+
+[dev-dependencies]
+tempfile.workspace = true

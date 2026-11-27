@@ -4,6 +4,7 @@ members = [
     "crates/bouml-core",
     "crates/bouml-persistence",
     "crates/bouml-codegen",
+    "crates/bouml-importers",
     "crates/bouml-cli",
 ]
 
