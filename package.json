@@ -1,0 +1,39 @@
+{
+  "name": "bouml-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "BouML v2 — Modern UML 2.5 Modeling, Bidirectional PlantUML, Multi-Language Codegen & Round-Trip Studio with Google AI Studio (gemini-4-hydrogen)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-fs": "^2.2.0",
+    "@xyflow/react": "^12.4.4",
+    "elkjs": "^0.9.3",
+    "js-yaml": "^4.1.0",
+    "lucide-react": "^0.475.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.9",
+    "@tauri-apps/cli": "^2.2.7",
+    "@types/js-yaml": "^4.0.9",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.10",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.9",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.1",
+    "vitest": "^3.0.7"
+  }
+}

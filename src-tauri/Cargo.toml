@@ -1,0 +1,22 @@
+[package]
+name = "bouml-v2"
+version = "2.0.0"
+description = "BouML v2 — Modern UML 2.5 Modeling, PlantUML & Multi-Language Codegen Studio"
+authors = ["BouML v2 Contributors"]
+edition = "2021"
+
+[lib]
+name = "bouml_v2_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
