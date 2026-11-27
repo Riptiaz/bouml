@@ -2,6 +2,8 @@ name: Release BouML v2 Desktop
 
 on:
   push:
+    branches:
+      - 'bouml-v2'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -37,16 +39,20 @@ jobs:
   publish-tauri:
     name: Build Desktop (${{ matrix.platform }})
     needs: test-and-check
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: 'macos-latest'
             args: '--target universal-apple-darwin'
+            rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
+            rust_targets: ''
           - platform: 'windows-latest'
             args: ''
+            rust_targets: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -61,13 +67,13 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Install Linux Tauri dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
 
       - name: Install frontend dependencies
         run: npm ci
@@ -77,8 +83,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_version }}
-          releaseName: 'BouML v2 (${{ github.ref_type == 'tag' && github.ref_name || inputs.release_version }})'
+          tagName: "${{ github.ref_type == 'tag' && github.ref_name || inputs.release_version || 'v2.0.0' }}"
+          releaseName: "BouML v2 (${{ github.ref_type == 'tag' && github.ref_name || inputs.release_version || 'v2.0.0' }})"
           releaseBody: |
             ## BouML v2 — Studio UML 2.5, PlantUML & Génération Multi-Langages
             - **Windows** : `.msi` et `.exe` (NSIS)
