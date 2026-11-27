@@ -1,0 +1,15 @@
+[package]
+name = "bouml-persistence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Git-friendly canonical multi-file YAML persistence (.bouml/) and legacy BouML v4 (.prj) importer"
+
+[dependencies]
+bouml-core = { path = "../bouml-core" }
+serde.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

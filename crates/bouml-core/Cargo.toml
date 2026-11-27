@@ -1,0 +1,11 @@
+[package]
+name = "bouml-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pure UML 2.5 metamodel, transactional command engine, and validator for BouML Next"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
