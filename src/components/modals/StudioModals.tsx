@@ -36,6 +36,9 @@ export const StudioModals: React.FC = () => {
     issues,
     selectElement,
     applyAiPlantUml,
+    applyPlantUmlToActiveDiagram,
+    applyMethodBodies,
+    applyAiTestClass,
     copilotContext,
     showToast,
   } = useProjectStore();
@@ -59,11 +62,65 @@ export const StudioModals: React.FC = () => {
     loadApiKey().then(setApiKey);
   }, [activeModal]);
 
+  const executeCopilot = async (actionToRun: CopilotAction) => {
+    const key = apiKey || (await loadApiKey());
+    if (!key) {
+      showToast('Configurez d\'abord votre clé API Google AI Studio.', 'error');
+      setActiveModal('ai_settings');
+      return;
+    }
+    setCopilotLoading(true);
+    setCopilotAnswer('');
+    try {
+      const targetEl = copilotContext?.elementId
+        ? project.elements[copilotContext.elementId] ?? null
+        : null;
+      const result = await askGeminiCopilot(
+        key,
+        actionToRun,
+        project,
+        targetEl,
+        targetLanguage,
+        customPrompt
+      );
+
+      if (result.kind === 'bodies' && targetEl) {
+        const applied = applyMethodBodies(targetEl.id, targetLanguage, result.bodies);
+        if (applied > 0) {
+          setActiveModal(null);
+          return;
+        }
+      } else if (result.kind === 'test_class' && targetEl) {
+        await applyAiTestClass(targetEl.id, targetLanguage, result.plantUml, result.bodies);
+        setActiveModal(null);
+        return;
+      } else if (result.kind === 'plantuml') {
+        await applyPlantUmlToActiveDiagram(result.plantUml);
+        if (result.summary) {
+          showToast(`SOLID appliqué : ${result.summary}`, 'success');
+        }
+        setActiveModal(null);
+        return;
+      } else if (result.kind === 'text') {
+        setCopilotAnswer(result.text);
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeModal === 'copilot' && copilotContext?.initialAction) {
       setCopilotAction(copilotContext.initialAction);
       setCopilotAnswer('');
+      // Auto-run non-custom right-click AI actions immediately so user sees result directly
+      if (copilotContext.initialAction !== 'custom') {
+        void executeCopilot(copilotContext.initialAction);
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal, copilotContext]);
 
   if (!activeModal) return null;
@@ -134,34 +191,7 @@ export const StudioModals: React.FC = () => {
     }
   };
 
-  const handleRunCopilot = async () => {
-    const key = apiKey || (await loadApiKey());
-    if (!key) {
-      showToast('Configurez d\'abord votre clé API Google AI Studio.', 'error');
-      setActiveModal('ai_settings');
-      return;
-    }
-    setCopilotLoading(true);
-    setCopilotAnswer('');
-    try {
-      const targetEl = copilotContext?.elementId
-        ? project.elements[copilotContext.elementId] ?? null
-        : null;
-      const ans = await askGeminiCopilot(
-        key,
-        copilotAction,
-        project,
-        targetEl,
-        targetLanguage,
-        customPrompt
-      );
-      setCopilotAnswer(ans);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err), 'error');
-    } finally {
-      setCopilotLoading(false);
-    }
-  };
+  const handleRunCopilot = () => executeCopilot(copilotAction);
 
   return (
     <div

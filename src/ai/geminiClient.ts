@@ -151,6 +151,30 @@ export type CopilotAction =
   | 'generate_tests'
   | 'custom';
 
+export type CopilotResult =
+  | { kind: 'bodies'; bodies: Record<string, string>; count: number }
+  | { kind: 'plantuml'; plantUml: string; summary?: string }
+  | { kind: 'test_class'; plantUml: string; bodies: Record<string, string> }
+  | { kind: 'text'; text: string };
+
+/**
+ * Parses compact ===OP:<id_or_name>=== ... ===END=== blocks returned by Gemini 4 Hydrogen.
+ */
+export function parseMethodBodyBlocks(raw: string): Record<string, string> {
+  const cleaned = raw.replace(/```[a-zA-Z0-9_+-]*\r?\n?/g, '').replace(/```/g, '');
+  const bodies: Record<string, string> = {};
+  const regex = /===OP:([^\n=]+)===\s*\r?\n([\s\S]*?)\r?\n?===END===/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(cleaned)) !== null) {
+    const key = match[1].trim();
+    const code = match[2].trim();
+    if (key && code) {
+      bodies[key] = code;
+    }
+  }
+  return bodies;
+}
+
 export async function askGeminiCopilot(
   apiKey: string,
   action: CopilotAction,
@@ -158,23 +182,119 @@ export async function askGeminiCopilot(
   targetElement: UmlElement | null,
   language: TargetLanguage,
   customPrompt?: string
-): Promise<string> {
+): Promise<CopilotResult> {
+  if (action === 'complete_bodies') {
+    if (!targetElement || targetElement.operations.length === 0) {
+      throw new Error('Sélectionnez une classe contenant au moins une méthode.');
+    }
+
+    const attrsList = targetElement.attributes
+      .map((a) => `${a.visibility} ${a.name}: ${a.type}${a.isReadOnly ? ' {readOnly}' : ''}`)
+      .join('\n');
+    const opsList = targetElement.operations
+      .map(
+        (o) =>
+          `[${o.id}] ${o.name}(${o.parameters.map((p) => `${p.name}: ${p.type}`).join(', ')}) : ${o.returnType || '(ctor)'}${o.isConst ? ' const' : ''}`
+      )
+      .join('\n');
+
+    const raw = await callGemini4Hydrogen({
+      apiKey,
+      systemInstruction: [
+        `Tu génères UNIQUEMENT les corps de méthodes en ${language} pour BouML v2.`,
+        'Zéro texte explicatif, zéro signature de classe ou de fonction, zéro markdown.',
+        'Pour chaque opération [id], réponds STRICTEMENT au format :',
+        '===OP:<id>===',
+        '<instructions du corps uniquement>',
+        '===END===',
+      ].join('\n'),
+      prompt: `Classe ${targetElement.name}\nAttributs:\n${attrsList || '(aucun)'}\n\nOpérations:\n${opsList}`,
+    });
+
+    const bodies = parseMethodBodyBlocks(raw);
+    const count = Object.keys(bodies).length;
+    if (count === 0) {
+      return { kind: 'text', text: raw };
+    }
+    return { kind: 'bodies', bodies, count };
+  }
+
+  if (action === 'audit_solid') {
+    const pumlContext = generatePlantUml(project);
+    const focus = targetElement ? `Cible prioritaire : ${targetElement.name}.` : 'Tout le diagramme.';
+    const raw = await callGemini4Hydrogen({
+      apiKey,
+      systemInstruction: [
+        'Tu es un architecte UML 2.5 expert SOLID pour BouML v2.',
+        'Analyse et corrige les violations SOLID directement dans le modèle.',
+        'Réponds de manière ultra-compacte :',
+        '1. Une ligne commençant par "SUMMARY: " résumant en 1-2 phrases les corrections SOLID appliquées.',
+        '2. Un bloc PlantUML complet et corrigé (@startuml ... @enduml) prêt à être importé tel quel (conserve les attributs, méthodes, types, {const}, {readOnly}, cardinalités et stéréotypes courts).',
+        'Zéro autre texte.',
+      ].join('\n'),
+      prompt: `${focus}\n\nModèle courant :\n${pumlContext}`,
+    });
+
+    const summaryMatch = raw.match(/^SUMMARY:\s*(.+)$/im);
+    if (/@startuml[\s\S]*@enduml/i.test(raw)) {
+      return {
+        kind: 'plantuml',
+        plantUml: raw,
+        summary: summaryMatch?.[1]?.trim(),
+      };
+    }
+    return { kind: 'text', text: raw };
+  }
+
+  if (action === 'generate_tests') {
+    if (!targetElement) {
+      throw new Error('Sélectionnez une classe pour générer ses tests unitaires.');
+    }
+    const testClassName = `${targetElement.name}Test`;
+    const opsSummary = targetElement.operations
+      .map(
+        (o) =>
+          `+${o.name}(${o.parameters.map((p) => `${p.name}: ${p.type}`).join(', ')}) : ${o.returnType || '(ctor)'}`
+      )
+      .join('\n');
+
+    const raw = await callGemini4Hydrogen({
+      apiKey,
+      systemInstruction: [
+        `Tu génères une classe de tests unitaires UML + corps de tests en ${language} pour BouML v2.`,
+        'Réponds STRICTEMENT avec ces 2 sections compactes, sans autre texte :',
+        '1. Un bloc PlantUML contenant la classe de test :',
+        `@startuml\nclass ${testClassName} <<Test>> {\n  +testXxx() : void\n}\n${testClassName} ..> ${targetElement.name} : tests\n@enduml`,
+        '2. Pour chaque méthode de test, son corps au format :',
+        '===OP:<nomMethodeTest>===',
+        '<code assertions du test>',
+        '===END===',
+      ].join('\n'),
+      prompt: `Génère les tests unitaires nominaux et cas limites pour la classe ${targetElement.name} :\n${opsSummary}`,
+    });
+
+    const bodies = parseMethodBodyBlocks(raw);
+    if (/@startuml[\s\S]*@enduml/i.test(raw)) {
+      return { kind: 'test_class', plantUml: raw, bodies };
+    }
+    return { kind: 'text', text: raw };
+  }
+
+  // Custom prompt: if it asks to modify/add UML, return compact PlantUML to auto-import
   const pumlContext = generatePlantUml(project);
-  const focus = targetElement
-    ? `Élément ciblé : ${targetElement.kind} ${targetElement.name}\nAttributs: ${JSON.stringify(targetElement.attributes)}\nOpérations: ${JSON.stringify(targetElement.operations)}`
-    : 'Contexte global du diagramme actif.';
-
-  const actionInstruction: Record<CopilotAction, string> = {
-    complete_bodies: `Complète le corps des méthodes de la classe ciblée en ${language}, avec un code propre, idiomatique et prêt pour la production.`,
-    audit_solid: `Effectue un audit strict des principes SOLID (SRP, OCP, LSP, ISP, DIP) sur ce modèle UML. Liste les violations concrètes et propose le refactoring PlantUML corrigé.`,
-    generate_tests: `Génère une suite complète de tests unitaires en ${language} couvrant tous les cas nominaux et cas limites de la classe ciblée.`,
-    custom: customPrompt || 'Analyse ce modèle UML et propose des améliorations architecturales.',
-  };
-
-  return await callGemini4Hydrogen({
+  const focus = targetElement ? `Classe sélectionnée : ${targetElement.name}` : 'Diagramme actif';
+  const raw = await callGemini4Hydrogen({
     apiKey,
-    systemInstruction:
-      'Tu es l\'assistant UML & Architecture intégré à BouML v2 (propulsé par gemini-4-hydrogen). Réponds en français de manière concise, structurée et directement exploitable.',
-    prompt: `${actionInstruction[action]}\n\n${focus}\n\nModèle PlantUML courant :\n\`\`\`plantuml\n${pumlContext}\n\`\`\``,
+    systemInstruction: [
+      'Tu es l\'assistant UML 2.5 intégré à BouML v2.',
+      'Si la demande implique de créer, modifier ou compléter le diagramme, réponds UNIQUEMENT par un bloc PlantUML complet et mis à jour (@startuml ... @enduml) sans texte superflu.',
+      'Sinon, réponds en français de manière concise.',
+    ].join('\n'),
+    prompt: `${customPrompt || 'Améliore ce modèle UML.'}\n\n${focus}\n\nModèle courant :\n${pumlContext}`,
   });
+
+  if (/@startuml[\s\S]*@enduml/i.test(raw)) {
+    return { kind: 'plantuml', plantUml: raw };
+  }
+  return { kind: 'text', text: raw };
 }

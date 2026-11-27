@@ -182,4 +182,19 @@ class Boisson <<Entity>> {
     expect(cppFiles[0].content).toContain('std::string getNom() const;');
     expect(cppFiles[0].content).toContain('void afficher() const;');
   });
+
+  it('parses compact Copilot method body blocks (===OP:...===)', async () => {
+    const { parseMethodBodyBlocks } = await import('../../ai/geminiClient');
+    const raw = `===OP:op_1===
+if (this->quantite <= 0) return false;
+this->quantite--;
+return true;
+===END===
+===OP:getNom===
+return this->nom;
+===END===`;
+    const parsed = parseMethodBodyBlocks(raw);
+    expect(parsed.op_1).toContain('this->quantite--');
+    expect(parsed.getNom).toBe('return this->nom;');
+  });
 });

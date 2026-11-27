@@ -105,6 +105,8 @@ interface ProjectStore {
   applyPlantUmlToActiveDiagram: (pumlSource: string) => Promise<void>;
   importFiles: (files: Array<{ name: string; content: string }>) => Promise<void>;
   applyAiPlantUml: (rawPlantUml: string) => Promise<void>;
+  applyMethodBodies: (elementId: string, lang: TargetLanguage, bodies: Record<string, string>) => number;
+  applyAiTestClass: (targetElementId: string, lang: TargetLanguage, testPuml: string, testBodies: Record<string, string>) => Promise<void>;
 }
 
 const initialProject = createDemoProject();
@@ -837,6 +839,119 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await get().runAutoLayout();
     get().showToast(
       `${totalElements} élément(s) modélisé(s) par Gemini 4 Hydrogen !`,
+      'success'
+    );
+  },
+
+  applyMethodBodies: (elementId, lang, bodies) => {
+    let applied = 0;
+    set((s) => {
+      const el = s.project.elements[elementId];
+      if (!el) return s;
+
+      const nextPreserved = { ...s.project.preservedBodies };
+      const nextOps = el.operations.map((op) => {
+        const matchedBody = bodies[op.id] ?? bodies[op.name];
+        if (!matchedBody) return op;
+        applied++;
+        nextPreserved[op.id] = {
+          ...(nextPreserved[op.id] ?? {}),
+          [lang]: matchedBody,
+        };
+        return {
+          ...op,
+          body: {
+            ...(op.body ?? {}),
+            [lang]: matchedBody,
+          },
+        };
+      });
+
+      if (applied === 0) return s;
+      return {
+        ...commitProject(s, {
+          ...s.project,
+          elements: {
+            ...s.project.elements,
+            [elementId]: { ...el, operations: nextOps },
+          },
+          preservedBodies: nextPreserved,
+        }),
+        selectedElementId: elementId,
+        rightPanelTab: 'code',
+      };
+    });
+
+    if (applied > 0) {
+      get().showToast(
+        `${applied} corps de méthode(s) complété(s) et intégrés au code Live !`,
+        'success'
+      );
+    }
+    return applied;
+  },
+
+  applyAiTestClass: async (targetElementId, lang, testPuml, testBodies) => {
+    const state = get();
+    const diag = state.project.diagrams[state.activeDiagramId];
+    const targetEl = state.project.elements[targetElementId];
+    if (!diag || !targetEl) return;
+
+    const blocks = parsePlantUmlBlocks(testPuml, targetEl.packageId);
+    const parsed = blocks[0];
+    if (!parsed || parsed.elements.length === 0) {
+      throw new Error('Impossible d\'extraire la classe de test générée.');
+    }
+
+    // Pick the test class (not the target class itself)
+    const testEl =
+      parsed.elements.find((e) => e.name.toLowerCase() !== targetEl.name.toLowerCase()) ??
+      parsed.elements[0];
+
+    const nextPreserved = { ...state.project.preservedBodies };
+    testEl.stereotype = testEl.stereotype || 'Test';
+    testEl.operations = testEl.operations.map((op) => {
+      const body = testBodies[op.name] ?? testBodies[op.id];
+      if (!body) return op;
+      nextPreserved[op.id] = { ...(nextPreserved[op.id] ?? {}), [lang]: body };
+      return { ...op, body: { ...(op.body ?? {}), [lang]: body } };
+    });
+
+    const relId = createId('rel');
+    const testRel: UmlRelation = {
+      id: relId,
+      kind: 'dependency',
+      sourceId: testEl.id,
+      targetId: targetEl.id,
+      label: 'tests',
+      stereotype: 'test',
+    };
+
+    const targetPos = diag.nodes.find((n) => n.elementId === targetElementId) ?? { x: 120, y: 120 };
+
+    set((s) => ({
+      ...commitProject(s, {
+        ...s.project,
+        elements: { ...s.project.elements, [testEl.id]: testEl },
+        relations: { ...s.project.relations, [relId]: testRel },
+        preservedBodies: nextPreserved,
+        diagrams: {
+          ...s.project.diagrams,
+          [diag.id]: {
+            ...diag,
+            nodes: [...diag.nodes, { elementId: testEl.id, x: targetPos.x + 340, y: targetPos.y }],
+            relationIds: [...diag.relationIds, relId],
+          },
+        },
+      }),
+      selectedElementId: testEl.id,
+      selectedRelationId: null,
+      rightPanelTab: 'code',
+    }));
+
+    await get().runAutoLayout();
+    get().showToast(
+      `Classe de tests "${testEl.name}" ajoutée au diagramme avec ${testEl.operations.length} test(s) !`,
       'success'
     );
   },
