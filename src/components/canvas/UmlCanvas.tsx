@@ -3,6 +3,7 @@ import {
   Background,
   BackgroundVariant,
   Connection,
+  ConnectionMode,
   Controls,
   Edge,
   MiniMap,
@@ -168,14 +169,64 @@ export const UmlCanvas: React.FC = () => {
       orderedRels.sort((a, b) => (a.sequenceOrder ?? 0) - (b.sequenceOrder ?? 0));
     }
 
+    // Group non-sequence edges by unordered node pair for parallel lane separation
+    const pairGroups = new Map<string, string[]>();
+    const selfLoopGroups = new Map<string, string[]>();
+    for (const rel of orderedRels) {
+      if (rel.sourceId === rel.targetId) {
+        const list = selfLoopGroups.get(rel.sourceId) ?? [];
+        list.push(rel.id);
+        selfLoopGroups.set(rel.sourceId, list);
+      } else {
+        const pairKey =
+          rel.sourceId < rel.targetId
+            ? `${rel.sourceId}::${rel.targetId}`
+            : `${rel.targetId}::${rel.sourceId}`;
+        const list = pairGroups.get(pairKey) ?? [];
+        list.push(rel.id);
+        pairGroups.set(pairKey, list);
+      }
+    }
+
     return orderedRels.map((rel, idx) => {
       const srcPos = posMap.get(rel.sourceId);
       const tgtPos = posMap.get(rel.targetId);
+      const isSelf = rel.sourceId === rel.targetId;
+
+      let sourceHandle: string | undefined;
+      let targetHandle: string | undefined;
+
+      if (diagram.kind !== 'sequence') {
+        if (isSelf) {
+          sourceHandle = 'bottom';
+          targetHandle = 'bottom';
+        } else if (srcPos && tgtPos) {
+          const dx = tgtPos.x - srcPos.x;
+          const dy = tgtPos.y - srcPos.y;
+          if (Math.abs(dx) >= Math.abs(dy)) {
+            sourceHandle = dx >= 0 ? 'right' : 'left';
+            targetHandle = dx >= 0 ? 'left' : 'right';
+          } else {
+            sourceHandle = dy >= 0 ? 'bottom' : 'top';
+            targetHandle = dy >= 0 ? 'top' : 'bottom';
+          }
+        }
+      }
+
+      const pairKey =
+        rel.sourceId < rel.targetId
+          ? `${rel.sourceId}::${rel.targetId}`
+          : `${rel.targetId}::${rel.sourceId}`;
+      const siblings = isSelf ? [] : pairGroups.get(pairKey) ?? [rel.id];
+      const selfSiblings = isSelf ? selfLoopGroups.get(rel.sourceId) ?? [rel.id] : [];
+
       return {
         id: rel.id,
         type: 'umlEdge',
         source: rel.sourceId,
         target: rel.targetId,
+        sourceHandle,
+        targetHandle,
         selected: selectedRelationId === rel.id,
         data: {
           relation: rel,
@@ -183,6 +234,9 @@ export const UmlCanvas: React.FC = () => {
           sourceCenterX: srcPos ? srcPos.x + (srcPos.width ?? 170) / 2 : undefined,
           targetCenterX: tgtPos ? tgtPos.x + (tgtPos.width ?? 170) / 2 : undefined,
           messageIndex: rel.sequenceOrder ?? idx + 1,
+          parallelIndex: siblings.indexOf(rel.id),
+          parallelCount: siblings.length,
+          selfLoopIndex: selfSiblings.indexOf(rel.id),
         },
       } as Edge;
     });
@@ -294,6 +348,7 @@ export const UmlCanvas: React.FC = () => {
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        connectionMode={ConnectionMode.Loose}
         onInit={setRfInstance}
         onNodesChange={onNodesChange}
         onConnect={onConnect}

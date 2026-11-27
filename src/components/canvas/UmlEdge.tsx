@@ -19,6 +19,9 @@ export interface UmlEdgeData extends Record<string, unknown> {
   sourceCenterX?: number;
   targetCenterX?: number;
   messageIndex?: number;
+  parallelIndex?: number;
+  parallelCount?: number;
+  selfLoopIndex?: number;
 }
 
 export const UmlEdge: React.FC<EdgeProps> = ({
@@ -40,6 +43,9 @@ export const UmlEdge: React.FC<EdgeProps> = ({
 
   const isSequenceMessage = edgeData?.diagramKind === 'sequence' && rel?.kind === 'message';
   const isSelfLoop = source === target;
+  const parallelIndex = edgeData?.parallelIndex ?? 0;
+  const parallelCount = edgeData?.parallelCount ?? 1;
+  const selfLoopIndex = edgeData?.selfLoopIndex ?? 0;
 
   let edgePath = '';
   let labelX = 0;
@@ -47,29 +53,47 @@ export const UmlEdge: React.FC<EdgeProps> = ({
 
   if (isSequenceMessage && rel) {
     const order = edgeData?.messageIndex ?? rel.sequenceOrder ?? 1;
-    const msgY = SEQUENCE_LIFELINE_Y + SEQUENCE_MESSAGE_START_Y + (order - 1) * SEQUENCE_MESSAGE_STEP_Y;
+    const msgY =
+      SEQUENCE_LIFELINE_Y + SEQUENCE_MESSAGE_START_Y + (order - 1) * SEQUENCE_MESSAGE_STEP_Y;
     const sx = edgeData?.sourceCenterX ?? sourceX;
     const tx = edgeData?.targetCenterX ?? targetX;
 
     if (isSelfLoop || Math.abs(sx - tx) < 10) {
-      // Self-call arrow on the right of the lifeline
-      const loopW = 54;
-      const loopH = 28;
+      const loopW = 68;
+      const loopH = 30;
       edgePath = `M ${sx} ${msgY} L ${sx + loopW} ${msgY} L ${sx + loopW} ${msgY + loopH} L ${sx} ${msgY + loopH}`;
-      labelX = sx + loopW + 6;
+      labelX = sx + loopW + 10;
       labelY = msgY + loopH / 2;
     } else {
       edgePath = `M ${sx} ${msgY} L ${tx} ${msgY}`;
       labelX = (sx + tx) / 2;
-      labelY = msgY - 14;
+      labelY = msgY - 16;
     }
   } else if (isSelfLoop) {
-    // Clean external reflexive loop for state transitions / self-associations
-    const rX = sourceX + 20;
-    const rY = sourceY - 16;
-    edgePath = `M ${rX} ${rY} C ${rX + 68} ${rY - 58}, ${rX + 68} ${rY + 58}, ${rX} ${rY + 24}`;
-    labelX = rX + 64;
-    labelY = rY - 4;
+    // Route self-loops strictly OUTSIDE below the bottom handle so they are NEVER hidden behind the node
+    const drop = 56 + selfLoopIndex * 42;
+    const spread = 44 + selfLoopIndex * 18;
+    const startX = sourceX - 14;
+    const endX = sourceX + 18;
+    edgePath = `M ${startX} ${sourceY} C ${startX - spread} ${sourceY + drop}, ${endX + spread} ${sourceY + drop}, ${endX} ${sourceY + 2}`;
+    labelX = sourceX + 2;
+    labelY = sourceY + drop + 12;
+  } else if (parallelCount > 1) {
+    // Separate parallel / bidirectional edges cleanly with distinct curved lanes & non-overlapping labels
+    const laneOffset = (parallelIndex - (parallelCount - 1) / 2) * 56;
+    const dx = targetX - sourceX;
+    const dy = targetY - sourceY;
+    const len = Math.hypot(dx, dy) || 1;
+    // Perpendicular unit vector
+    const nx = -dy / len;
+    const ny = dx / len;
+    const midX = (sourceX + targetX) / 2 + nx * laneOffset;
+    const midY = (sourceY + targetY) / 2 + ny * laneOffset;
+
+    edgePath = `M ${sourceX} ${sourceY} Q ${midX} ${midY} ${targetX} ${targetY}`;
+    // Exact quadratic Bezier midpoint at t = 0.5
+    labelX = 0.25 * sourceX + 0.5 * midX + 0.25 * targetX;
+    labelY = 0.25 * sourceY + 0.5 * midY + 0.25 * targetY;
   } else {
     const [p, lx, ly] = getSmoothStepPath({
       sourceX,
@@ -78,7 +102,8 @@ export const UmlEdge: React.FC<EdgeProps> = ({
       targetX,
       targetY,
       targetPosition,
-      borderRadius: 12,
+      borderRadius: 14,
+      offset: 32,
     });
     edgePath = p;
     labelX = lx;
@@ -163,7 +188,7 @@ export const UmlEdge: React.FC<EdgeProps> = ({
         markerStart={markerStart}
         style={{
           stroke: strokeColor,
-          strokeWidth: selected ? 2.5 : 1.75,
+          strokeWidth: selected ? 2.5 : 1.85,
           strokeDasharray: isDashed ? '6 4' : undefined,
         }}
       />
@@ -176,8 +201,9 @@ export const UmlEdge: React.FC<EdgeProps> = ({
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
+              zIndex: 30,
             }}
-            className={`px-2 py-0.5 rounded-md text-[10px] font-medium border cursor-pointer whitespace-nowrap ${
+            className={`px-2 py-0.5 rounded-md text-[10px] font-medium border shadow-sm cursor-pointer whitespace-nowrap ${
               selected
                 ? 'bg-indigo-950 border-indigo-400 text-indigo-100'
                 : 'bg-slate-900/95 border-slate-700 text-slate-200 hover:border-indigo-400'
@@ -188,13 +214,14 @@ export const UmlEdge: React.FC<EdgeProps> = ({
           </div>
         )}
 
-        {!isSequenceMessage && rel.sourceMultiplicity && (
+        {!isSequenceMessage && !isSelfLoop && rel.sourceMultiplicity && (
           <div
             onContextMenu={onCtx}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${srcBadgeX}px,${srcBadgeY}px)`,
               pointerEvents: 'all',
+              zIndex: 25,
             }}
             className="px-1.5 py-0.2 rounded bg-slate-950/90 border border-slate-700/80 text-[10px] font-mono text-amber-300"
           >
@@ -202,13 +229,14 @@ export const UmlEdge: React.FC<EdgeProps> = ({
           </div>
         )}
 
-        {!isSequenceMessage && rel.targetMultiplicity && (
+        {!isSequenceMessage && !isSelfLoop && rel.targetMultiplicity && (
           <div
             onContextMenu={onCtx}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${tgtBadgeX}px,${tgtBadgeY}px)`,
               pointerEvents: 'all',
+              zIndex: 25,
             }}
             className="px-1.5 py-0.2 rounded bg-slate-950/90 border border-slate-700/80 text-[10px] font-mono text-amber-300"
           >

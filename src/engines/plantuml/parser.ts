@@ -391,9 +391,9 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
       continue;
     }
 
-    // Actor / Usecase / Component / Node / Artifact / State / Participant
+    // Actor / Usecase / Component / Node / Artifact / State / Sequence Participants
     const simpleMatch = line.match(
-      /^(actor|usecase|component|node|artifact|state|participant)\s+(?:"([^"]+)"|([^\s{<]+))(?:\s+as\s+(\S+))?(?:\s*<<([^>]+)>>)?/i
+      /^(actor|usecase|component|node|artifact|state|participant|boundary|control|entity|database|collections|queue)\s+(?:"([^"]+)"|([^\s{<]+))(?:\s+as\s+(\S+))?(?:\s*<<([^>]+)>>)?/i
     );
     if (simpleMatch) {
       const [, kwRaw, quoted, bare, alias, stereo] = simpleMatch;
@@ -417,7 +417,15 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
       } else if (kw === 'state') {
         kind = 'state';
         diagramKind = 'state';
-      } else if (kw === 'participant') {
+      } else if (
+        kw === 'participant' ||
+        kw === 'boundary' ||
+        kw === 'control' ||
+        kw === 'entity' ||
+        kw === 'database' ||
+        kw === 'collections' ||
+        kw === 'queue'
+      ) {
         kind = 'lifeline';
         diagramKind = 'sequence';
       }
@@ -466,6 +474,11 @@ export function parsePlantUml(source: string, defaultPackageId: string): ParsedP
     if (relMatch) {
       const [, rawSrc, srcMult, arrow, tgtMult, rawTgt, rawLabel] = relMatch;
       const reversed = arrow.startsWith('<') || arrow.endsWith('*') || arrow.endsWith('o');
+
+      // Promote to sequence diagram if sequence message arrow (-> or ->>) is used
+      if (arrow === '->' || arrow === '->>') {
+        diagramKind = 'sequence';
+      }
 
       const resolveNode = (token: string, isTarget: boolean): UmlElement => {
         if (token === '[*]') {

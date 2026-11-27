@@ -1,6 +1,6 @@
 [package]
 name = "bouml-v2"
-version = "2.1.2"
+version = "2.1.3"
 description = "BouML v2 — Modern UML 2.5 Modeling, PlantUML & Multi-Language Codegen Studio"
 authors = ["BouML v2 Contributors"]
 edition = "2021"

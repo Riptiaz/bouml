@@ -4,9 +4,9 @@ import { BoumlProject, DiagramNodePosition } from '../../model/schema';
 const elk = new ELK();
 
 export const SEQUENCE_LIFELINE_Y = 40;
-export const SEQUENCE_LIFELINE_GAP_X = 280;
-export const SEQUENCE_MESSAGE_START_Y = 128;
-export const SEQUENCE_MESSAGE_STEP_Y = 58;
+export const SEQUENCE_LIFELINE_GAP_X = 310;
+export const SEQUENCE_MESSAGE_START_Y = 132;
+export const SEQUENCE_MESSAGE_STEP_Y = 66;
 
 export function estimateNodeSize(
   project: BoumlProject,
@@ -191,8 +191,10 @@ export async function computeElkLayout(
     layoutOptions: {
       'elk.algorithm': 'layered',
       'elk.direction': direction,
-      'elk.spacing.nodeNode': '64',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '88',
+      'elk.spacing.nodeNode': '110',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '140',
+      'elk.spacing.edgeNode': '56',
+      'elk.spacing.edgeEdge': '42',
       'elk.edgeRouting': 'ORTHOGONAL',
       'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
