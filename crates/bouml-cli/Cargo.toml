@@ -10,6 +10,7 @@ name = "bouml"
 path = "src/main.rs"
 
 [dependencies]
+bouml-codegen = { path = "../bouml-codegen" }
 bouml-core = { path = "../bouml-core" }
 bouml-persistence = { path = "../bouml-persistence" }
 clap.workspace = true

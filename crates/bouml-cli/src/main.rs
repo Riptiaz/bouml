@@ -1,3 +1,6 @@
+use bouml_codegen::{
+    generate_project, roundtrip_bodies_from_dir, GenerateOptions, TargetLanguage,
+};
 use bouml_core::{
     validate_project, Classifier, ClassifierKind, Command, CommandHistory, Diagram, DiagramKind,
     Package, Project, Severity,
@@ -94,6 +97,34 @@ enum Commands {
         /// Optional output file (prints to stdout if omitted)
         #[arg(short, long)]
         out: Option<PathBuf>,
+    },
+    /// Generate source code from a `.bouml/` project with BouML preserved-body support
+    Generate {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
+        /// Target language (cpp, java, python, typescript, php, rust, go, sql)
+        #[arg(short, long)]
+        lang: String,
+        /// Output directory for generated source files
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Disable preserved-body markers and disk body reuse
+        #[arg(long)]
+        no_preserve_bodies: bool,
+        /// Compute files without writing to disk
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Sync developer-edited preserved method bodies from source files back into `.bouml/`
+    RoundtripBodies {
+        /// Path to the `.bouml/` project directory
+        dir: PathBuf,
+        /// Source language (cpp, java, python, typescript, php, rust, go)
+        #[arg(short, long)]
+        lang: String,
+        /// Source directory containing files with BouML preserved-body markers
+        #[arg(short, long)]
+        src: PathBuf,
     },
 }
 
@@ -239,6 +270,52 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 None => println!("{json}"),
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Generate {
+            dir,
+            lang,
+            out,
+            no_preserve_bodies,
+            dry_run,
+        } => {
+            let language: TargetLanguage = lang.parse()?;
+            let project = load_project(&dir)?;
+            let report = generate_project(
+                &project,
+                &GenerateOptions {
+                    language,
+                    output_dir: out.clone(),
+                    preserve_bodies: !no_preserve_bodies,
+                    dry_run,
+                },
+            )?;
+            println!(
+                "Generated {} code for '{}' -> {} (written: {}, unchanged: {}, bodies preserved: {})",
+                report.language,
+                project.name,
+                out.display(),
+                report.files_written,
+                report.files_unchanged,
+                report.preserved_bodies_reused
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::RoundtripBodies { dir, lang, src } => {
+            let language: TargetLanguage = lang.parse()?;
+            let mut project = load_project(&dir)?;
+            let report = roundtrip_bodies_from_dir(&mut project, &src, language)?;
+            if report.bodies_updated > 0 {
+                save_project(&project, &dir)?;
+            }
+            println!(
+                "Round-tripped {} bodies from {} (files scanned: {}, updated: {}, unchanged: {})",
+                report.language,
+                src.display(),
+                report.files_scanned,
+                report.bodies_updated,
+                report.bodies_unchanged
+            );
             Ok(ExitCode::SUCCESS)
         }
     }

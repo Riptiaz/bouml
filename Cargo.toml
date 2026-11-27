@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/bouml-core",
     "crates/bouml-persistence",
+    "crates/bouml-codegen",
     "crates/bouml-cli",
 ]
 

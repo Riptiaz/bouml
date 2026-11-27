@@ -62,10 +62,21 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 name = "bouml-cli"
 version = "0.1.0"
 dependencies = [
+ "bouml-codegen",
  "bouml-core",
  "bouml-persistence",
  "clap",
  "serde_json",
+]
+
+[[package]]
+name = "bouml-codegen"
+version = "0.1.0"
+dependencies = [
+ "bouml-core",
+ "serde",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
