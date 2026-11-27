@@ -9,9 +9,10 @@ import {
   KeyRound,
   Loader2,
   Moon,
+  Paperclip,
   Sparkles,
   Sun,
-  Upload,
+  Wand2,
   X,
 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
@@ -32,6 +33,10 @@ import { exportXmi2 } from '../../engines/exporters/xmiExporter';
 import { LANGUAGE_LABELS } from '../../model/schema';
 import { saveAsFile } from '../../utils/fileSystem';
 import { captureCanvasToPngBlob } from '../../utils/pngExport';
+import { AiAttachment, readFileAsAiAttachment } from '../../utils/attachments';
+
+const ACCEPTED_ATTACHMENT_TYPES =
+  'image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.doc,.txt,.md';
 
 export const StudioModals: React.FC = () => {
   const {
@@ -51,6 +56,8 @@ export const StudioModals: React.FC = () => {
     applyPlantUmlToActiveDiagram,
     applyMethodBodies,
     applyAiTestClass,
+    fixIssue,
+    fixAllIssues,
     copilotContext,
     pngCropRect,
     startPngCropMode,
@@ -63,9 +70,10 @@ export const StudioModals: React.FC = () => {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  // Spec Wizard state
+  // Spec Wizard & Modify Diagram state
   const [specText, setSpecText] = useState('');
   const [generatingSpec, setGeneratingSpec] = useState(false);
+  const [attachments, setAttachments] = useState<AiAttachment[]>([]);
 
   // Copilot / Modify Diagram state — defaults to 'custom' (Demande libre), NEVER auto-triggers on mount!
   const [copilotAction, setCopilotAction] = useState<CopilotAction>('custom');
@@ -109,25 +117,44 @@ export const StudioModals: React.FC = () => {
     setTesting(false);
   };
 
-  const handleSpecFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.name.toLowerCase().endsWith('.pdf')) {
-      const buf = await file.arrayBuffer();
-      const raw = new TextDecoder('latin1').decode(buf);
-      const readable = raw.replace(/[^\x20-\x7E\xA0-\xFF\n\r]/g, ' ').replace(/\s{3,}/g, '\n');
-      setSpecText(readable.slice(0, 24000));
-      showToast(`Fichier PDF "${file.name}" chargé.`, 'info');
-    } else {
-      setSpecText(await file.text());
-      showToast(`Cahier des charges "${file.name}" chargé.`, 'info');
+  const handleAttachFiles = async (files: FileList | File[]) => {
+    const added: AiAttachment[] = [];
+    for (const f of Array.from(files)) {
+      try {
+        added.push(await readFileAsAiAttachment(f));
+      } catch {
+        showToast(`Impossible de lire la pièce jointe "${f.name}".`, 'error');
+      }
     }
-    e.target.value = '';
+    if (added.length > 0) {
+      setAttachments((prev) => [...prev, ...added]);
+      showToast(`${added.length} pièce(s) jointe(s) ajoutée(s) pour l'IA.`, 'info');
+    }
+  };
+
+  const handlePasteAttachment = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      await handleAttachFiles(files);
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   const handleRunSpecToUml = async () => {
-    if (!specText.trim()) {
-      showToast('Veuillez saisir ou importer un cahier des charges.', 'error');
+    if (!specText.trim() && attachments.length === 0) {
+      showToast('Veuillez saisir un prompt ou joindre un fichier (image, PDF, DOCX, TXT, MD).', 'error');
       return;
     }
     const key = apiKey || (await loadApiKey());
@@ -138,7 +165,7 @@ export const StudioModals: React.FC = () => {
     }
     setGeneratingSpec(true);
     try {
-      const res = await generateUmlFromSpec(key, specText, aiModel);
+      const res = await generateUmlFromSpec(key, specText, aiModel, attachments);
       if (res.usedFallback) {
         showToast(
           `Bascule automatique sur ${res.modelUsed} suite à une limite/erreur du modèle précédent.`,
@@ -146,6 +173,7 @@ export const StudioModals: React.FC = () => {
         );
       }
       await applyAiPlantUml(res.text);
+      setAttachments([]);
       close();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), 'error');
@@ -161,8 +189,8 @@ export const StudioModals: React.FC = () => {
       setActiveModal('ai_settings');
       return;
     }
-    if (actionToRun === 'custom' && !customPrompt.trim()) {
-      showToast('Saisissez votre demande avant de lancer l\'Assistant IA.', 'error');
+    if (actionToRun === 'custom' && !customPrompt.trim() && attachments.length === 0) {
+      showToast("Saisissez votre demande ou joignez une image/document avant de lancer l'Assistant IA.", 'error');
       return;
     }
     setCopilotLoading(true);
@@ -179,7 +207,8 @@ export const StudioModals: React.FC = () => {
         targetEl,
         targetLanguage,
         customPrompt,
-        aiModel
+        aiModel,
+        attachments
       );
 
       if (result.usedFallback) {
@@ -192,11 +221,13 @@ export const StudioModals: React.FC = () => {
       if (result.kind === 'bodies' && targetEl) {
         const applied = applyMethodBodies(targetEl.id, targetLanguage, result.bodies);
         if (applied > 0) {
+          setAttachments([]);
           setActiveModal(null);
           return;
         }
       } else if (result.kind === 'test_class' && targetEl) {
         await applyAiTestClass(targetEl.id, targetLanguage, result.plantUml, result.bodies);
+        setAttachments([]);
         setActiveModal(null);
         return;
       } else if (result.kind === 'plantuml') {
@@ -204,6 +235,7 @@ export const StudioModals: React.FC = () => {
         if (result.summary) {
           showToast(`Appliqué : ${result.summary}`, 'success');
         }
+        setAttachments([]);
         setActiveModal(null);
         return;
       } else if (result.kind === 'text') {
@@ -254,6 +286,65 @@ export const StudioModals: React.FC = () => {
     ? project.elements[copilotContext.elementId]
     : undefined;
 
+  const renderAttachmentsBar = () => (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer transition-colors">
+          <Paperclip className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Joindre fichier (Image, PDF, DOCX, TXT, MD)</span>
+          <input
+            type="file"
+            multiple
+            accept={ACCEPTED_ATTACHMENT_TYPES}
+            onChange={(e) => {
+              if (e.target.files?.length) void handleAttachFiles(e.target.files);
+              e.target.value = '';
+            }}
+            className="hidden"
+          />
+        </label>
+        <span className="text-[10px] text-slate-500">
+          Astuce : vous pouvez aussi coller une image (Ctrl+V)
+        </span>
+      </div>
+
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {attachments.map((att) => (
+            <div
+              key={att.id}
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-[11px] text-slate-200"
+            >
+              {att.previewUrl ? (
+                <img
+                  src={att.previewUrl}
+                  alt={att.name}
+                  className="w-7 h-7 rounded object-cover border border-slate-700"
+                />
+              ) : (
+                <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+              )}
+              <div className="max-w-[160px] truncate">
+                <div className="truncate font-medium">{att.name}</div>
+                <div className="text-[9px] text-slate-500">
+                  {att.base64Data ? 'Multimodal natif' : 'Texte extrait'} •{' '}
+                  {Math.max(1, Math.round(att.size / 1024))} Ko
+                </div>
+              </div>
+              <button
+                onClick={() => removeAttachment(att.id)}
+                className="text-slate-400 hover:text-rose-400 cursor-pointer"
+                title="Retirer cette pièce jointe"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       onMouseDown={(e) => {
@@ -262,7 +353,7 @@ export const StudioModals: React.FC = () => {
       onContextMenu={(e) => e.preventDefault()}
       className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4"
     >
-      <div className="bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[86vh] flex flex-col overflow-hidden">
+      <div className="bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden">
         {/* AI SETTINGS MODAL */}
         {activeModal === 'ai_settings' && (
           <>
@@ -278,7 +369,7 @@ export const StudioModals: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-5 space-y-4 text-xs">
+            <div className="p-5 space-y-4 text-xs overflow-y-auto">
               <div className="space-y-1.5">
                 <span className="text-slate-300 font-medium block">Modèle IA actif</span>
                 <div className="grid grid-cols-2 gap-2">
@@ -399,7 +490,7 @@ export const StudioModals: React.FC = () => {
             </div>
 
             {aiAssistantTab === 'modify' ? (
-              <div className="p-5 space-y-3.5 text-xs overflow-y-auto">
+              <div className="p-5 space-y-3.5 text-xs overflow-y-auto" onPaste={handlePasteAttachment}>
                 {contextElement && (
                   <div className="px-3 py-1.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-indigo-200 flex items-center justify-between">
                     <span>
@@ -408,7 +499,6 @@ export const StudioModals: React.FC = () => {
                   </div>
                 )}
 
-                {/* Action chips — Demande libre selected by default, shortcuts clickable on demand */}
                 <div className="flex flex-wrap gap-1.5">
                   {(
                     [
@@ -433,14 +523,17 @@ export const StudioModals: React.FC = () => {
                 </div>
 
                 {copilotAction === 'custom' && (
-                  <textarea
-                    autoFocus
-                    rows={5}
-                    value={customPrompt}
-                    onChange={(e) => setCustomPrompt(e.target.value)}
-                    placeholder="Ex: Ajoute une classe Facture reliée à Commande (1..1), ou ajoute un bloc alt [stock > 0] dans la séquence..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 outline-none focus:border-indigo-500 leading-relaxed"
-                  />
+                  <>
+                    <textarea
+                      autoFocus
+                      rows={5}
+                      value={customPrompt}
+                      onChange={(e) => setCustomPrompt(e.target.value)}
+                      placeholder="Ex: À partir de l'image jointe, reproduis ce diagramme et ajoute une classe Facture reliée à Commande..."
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 outline-none focus:border-indigo-500 leading-relaxed"
+                    />
+                    {renderAttachmentsBar()}
+                  </>
                 )}
 
                 {copilotAction !== 'custom' && (
@@ -474,7 +567,7 @@ export const StudioModals: React.FC = () => {
                     ) : (
                       <>
                         <Sparkles className="w-3.5 h-3.5" />
-                        Appliquer avec {aiModel}
+                        Appliquer ({aiModel})
                       </>
                     )}
                   </button>
@@ -487,36 +580,24 @@ export const StudioModals: React.FC = () => {
                 )}
               </div>
             ) : (
-              <div className="p-5 space-y-4 text-xs overflow-y-auto">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-slate-300">
-                    Collez votre cahier des charges ou importez un fichier <code>.md</code>,{' '}
-                    <code>.txt</code> ou <code>.pdf</code>. Les diagrammes (Classes, Cas
-                    d'utilisation, Séquence avec <code>alt/opt/loop</code>, États) seront générés
-                    de manière cohérente.
-                  </p>
-                  <label className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer">
-                    <Upload className="w-3.5 h-3.5 text-indigo-400" />
-                    Importer fichier
-                    <input
-                      type="file"
-                      accept=".md,.txt,.pdf"
-                      onChange={handleSpecFileUpload}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
+              <div className="p-5 space-y-3.5 text-xs overflow-y-auto" onPaste={handlePasteAttachment}>
+                <p className="text-slate-300">
+                  Saisissez votre cahier des charges et/ou joignez des <strong>images (PNG/JPG/WEBP)</strong>,{' '}
+                  <strong>PDF</strong>, <strong>DOCX/DOC</strong>, <strong>TXT/MD</strong> envoyés directement à l'IA.
+                </p>
 
                 <textarea
                   autoFocus
-                  rows={10}
+                  rows={8}
                   value={specText}
                   onChange={(e) => setSpecText(e.target.value)}
-                  placeholder="Décrivez votre système, vos classes, cas d'utilisation, scénarios de séquence et états..."
+                  placeholder="Ex: À partir du PDF ou de la capture d'écran jointe, génère les diagrammes de classes, cas d'utilisation et séquences..."
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-100 outline-none focus:border-indigo-500 leading-relaxed"
                 />
 
-                <div className="flex items-center justify-end gap-2">
+                {renderAttachmentsBar()}
+
+                <div className="flex items-center justify-end gap-2 pt-1">
                   <button
                     onClick={close}
                     className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
@@ -657,19 +738,30 @@ export const StudioModals: React.FC = () => {
           </>
         )}
 
-        {/* VALIDATION MODAL */}
+        {/* VALIDATION MODAL WITH 1-CLICK AUTO-FIX */}
         {activeModal === 'validation' && (
           <>
-            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-400" />
                 <h2 className="text-sm font-bold text-white">
                   Vérification de Cohérence UML & SOLID ({issues.length})
                 </h2>
               </div>
-              <button onClick={close} className="text-slate-400 hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {issues.length > 0 && (
+                  <button
+                    onClick={fixAllIssues}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    Tout corriger automatiquement
+                  </button>
+                )}
+                <button onClick={close} className="text-slate-400 hover:text-white cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="p-4 space-y-2 overflow-y-auto max-h-[65vh] text-xs">
@@ -682,13 +774,7 @@ export const StudioModals: React.FC = () => {
                 issues.map((issue) => (
                   <div
                     key={issue.id}
-                    onClick={() => {
-                      if (issue.elementId) {
-                        selectElement(issue.elementId);
-                        close();
-                      }
-                    }}
-                    className={`p-3 rounded-lg border cursor-pointer ${
+                    className={`p-3 rounded-lg border flex items-start justify-between gap-3 ${
                       issue.severity === 'error'
                         ? 'bg-rose-950/40 border-rose-500/40 text-rose-200'
                         : issue.severity === 'warning'
@@ -696,15 +782,37 @@ export const StudioModals: React.FC = () => {
                           : 'bg-sky-950/40 border-sky-500/40 text-sky-200'
                     }`}
                   >
-                    <div className="font-semibold flex items-center gap-2">
-                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-950/70">
-                        {issue.code}
-                      </span>
-                      <span>{issue.message}</span>
+                    <div
+                      onClick={() => {
+                        if (issue.elementId) {
+                          selectElement(issue.elementId);
+                          close();
+                        }
+                      }}
+                      className="flex-1 cursor-pointer"
+                    >
+                      <div className="font-semibold flex items-center gap-2">
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-950/70">
+                          {issue.code}
+                        </span>
+                        <span>{issue.message}</span>
+                      </div>
+                      {issue.suggestion && (
+                        <div className="mt-1 text-[11px] opacity-80">{issue.suggestion}</div>
+                      )}
                     </div>
-                    {issue.suggestion && (
-                      <div className="mt-1 text-[11px] opacity-80">{issue.suggestion}</div>
-                    )}
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fixIssue(issue);
+                      }}
+                      className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer"
+                      title="Corriger automatiquement ce problème"
+                    >
+                      <Wand2 className="w-3 h-3" />
+                      {issue.code === 'SOLID-SRP' ? 'Corriger (IA)' : 'Corriger'}
+                    </button>
                   </div>
                 ))
               )}

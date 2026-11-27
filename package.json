@@ -1,6 +1,6 @@
 {
   "name": "bouml-v2",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "private": true,
   "description": "BouML v2 — Modern UML 2.5 Modeling, Bidirectional PlantUML, Multi-Language Codegen & Round-Trip Studio with Google AI Studio (gemini-4-hydrogen)",
   "type": "module",

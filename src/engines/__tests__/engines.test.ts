@@ -380,4 +380,21 @@ class Service {
     const stLaidOut = await computeElkLayout(proj, 'diag_st_comp', 'RIGHT');
     expect(stLaidOut.length).toBe(parsedSt.elements.length);
   });
+
+  it('auto-fixes orphan duplicates and validation issues automatically', async () => {
+    const { fixAllValidationIssues } = await import('../../model/autoFix');
+    const proj = createDemoProject();
+    // Inject an unused orphan duplicate of Customer (simulating an AI edit duplicate)
+    proj.elements.el_user_orphan_dup = {
+      ...proj.elements.el_user,
+      id: 'el_user_orphan_dup',
+    };
+    const beforeIssues = validateProject(proj);
+    expect(beforeIssues.some((i) => i.code === 'UML-001')).toBe(true);
+
+    const fixed = fixAllValidationIssues(proj);
+    expect(fixed.project.elements.el_user_orphan_dup).toBeUndefined();
+    expect(fixed.project.elements.el_user).toBeDefined();
+    expect(validateProject(fixed.project).filter((i) => i.code === 'UML-001')).toHaveLength(0);
+  });
 });

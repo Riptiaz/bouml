@@ -18,6 +18,7 @@ import { UmlNode } from './UmlNode';
 import { UmlEdge } from './UmlEdge';
 import { COMMON_MULTIPLICITIES, RelationKind, SequenceFragment } from '../../model/schema';
 import {
+  estimateNodeSize,
   SEQUENCE_LIFELINE_Y,
   SEQUENCE_MESSAGE_START_Y,
   SEQUENCE_MESSAGE_STEP_Y,
@@ -188,6 +189,17 @@ export const UmlCanvas: React.FC = () => {
       }
     }
 
+    const obstacleBoxes = diagram.nodes.map((n) => {
+      const est = estimateNodeSize(project, n.elementId);
+      return {
+        id: n.elementId,
+        x: n.x,
+        y: n.y,
+        width: n.width ?? est.width,
+        height: n.height ?? est.height,
+      };
+    });
+
     return orderedRels.map((rel, idx) => {
       const srcPos = posMap.get(rel.sourceId);
       const tgtPos = posMap.get(rel.targetId);
@@ -198,17 +210,17 @@ export const UmlCanvas: React.FC = () => {
 
       if (diagram.kind !== 'sequence') {
         if (isSelf) {
-          sourceHandle = 'bottom';
-          targetHandle = 'bottom';
+          sourceHandle = 'bottom-src';
+          targetHandle = 'bottom-tgt';
         } else if (srcPos && tgtPos) {
           const dx = tgtPos.x - srcPos.x;
           const dy = tgtPos.y - srcPos.y;
           if (Math.abs(dx) >= Math.abs(dy)) {
-            sourceHandle = dx >= 0 ? 'right' : 'left';
-            targetHandle = dx >= 0 ? 'left' : 'right';
+            sourceHandle = dx >= 0 ? 'right-src' : 'left-src';
+            targetHandle = dx >= 0 ? 'left-tgt' : 'right-tgt';
           } else {
-            sourceHandle = dy >= 0 ? 'bottom' : 'top';
-            targetHandle = dy >= 0 ? 'top' : 'bottom';
+            sourceHandle = dy >= 0 ? 'bottom-src' : 'top-src';
+            targetHandle = dy >= 0 ? 'top-tgt' : 'bottom-tgt';
           }
         }
       }
@@ -237,10 +249,11 @@ export const UmlCanvas: React.FC = () => {
           parallelIndex: siblings.indexOf(rel.id),
           parallelCount: siblings.length,
           selfLoopIndex: selfSiblings.indexOf(rel.id),
+          obstacleBoxes,
         },
       } as Edge;
     });
-  }, [diagram, project.relations, selectedRelationId]);
+  }, [diagram, project, selectedRelationId]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {

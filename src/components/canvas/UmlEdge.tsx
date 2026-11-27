@@ -13,6 +13,14 @@ import {
   SEQUENCE_MESSAGE_STEP_Y,
 } from '../../engines/layout/elkLayout';
 
+export interface ObstacleBox {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface UmlEdgeData extends Record<string, unknown> {
   relation: UmlRelation;
   diagramKind?: string;
@@ -22,6 +30,29 @@ export interface UmlEdgeData extends Record<string, unknown> {
   parallelIndex?: number;
   parallelCount?: number;
   selfLoopIndex?: number;
+  obstacleBoxes?: ObstacleBox[];
+}
+
+function findBlockingObstacles(
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+  sourceId: string,
+  targetId: string,
+  obstacles: ObstacleBox[]
+): ObstacleBox[] {
+  const minX = Math.min(sx, tx) + 8;
+  const maxX = Math.max(sx, tx) - 8;
+  const minY = Math.min(sy, ty) - 18;
+  const maxY = Math.max(sy, ty) + 18;
+
+  return obstacles.filter((obs) => {
+    if (obs.id === sourceId || obs.id === targetId) return false;
+    const obsRight = obs.x + obs.width;
+    const obsBottom = obs.y + obs.height;
+    return obsRight > minX && obs.x < maxX && obsBottom > minY && obs.y < maxY;
+  });
 }
 
 export const UmlEdge: React.FC<EdgeProps> = ({
@@ -46,6 +77,7 @@ export const UmlEdge: React.FC<EdgeProps> = ({
   const parallelIndex = edgeData?.parallelIndex ?? 0;
   const parallelCount = edgeData?.parallelCount ?? 1;
   const selfLoopIndex = edgeData?.selfLoopIndex ?? 0;
+  const obstacles = edgeData?.obstacleBoxes ?? [];
 
   let edgePath = '';
   let labelX = 0;
@@ -78,36 +110,64 @@ export const UmlEdge: React.FC<EdgeProps> = ({
     edgePath = `M ${startX} ${sourceY} C ${startX - spread} ${sourceY + drop}, ${endX + spread} ${sourceY + drop}, ${endX} ${sourceY + 2}`;
     labelX = sourceX + 2;
     labelY = sourceY + drop + 12;
-  } else if (parallelCount > 1) {
-    // Separate parallel / bidirectional edges cleanly with distinct curved lanes & non-overlapping labels
-    const laneOffset = (parallelIndex - (parallelCount - 1) / 2) * 56;
-    const dx = targetX - sourceX;
-    const dy = targetY - sourceY;
-    const len = Math.hypot(dx, dy) || 1;
-    // Perpendicular unit vector
-    const nx = -dy / len;
-    const ny = dx / len;
-    const midX = (sourceX + targetX) / 2 + nx * laneOffset;
-    const midY = (sourceY + targetY) / 2 + ny * laneOffset;
-
-    edgePath = `M ${sourceX} ${sourceY} Q ${midX} ${midY} ${targetX} ${targetY}`;
-    // Exact quadratic Bezier midpoint at t = 0.5
-    labelX = 0.25 * sourceX + 0.5 * midX + 0.25 * targetX;
-    labelY = 0.25 * sourceY + 0.5 * midY + 0.25 * targetY;
   } else {
-    const [p, lx, ly] = getSmoothStepPath({
+    const blockers = findBlockingObstacles(
       sourceX,
       sourceY,
-      sourcePosition,
       targetX,
       targetY,
-      targetPosition,
-      borderRadius: 14,
-      offset: 32,
-    });
-    edgePath = p;
-    labelX = lx;
-    labelY = ly;
+      source,
+      target,
+      obstacles
+    );
+
+    if (blockers.length > 0) {
+      // Detour cleanly ABOVE or BELOW all blocking nodes with generous 44px clearance margin
+      const minObsTop = Math.min(...blockers.map((b) => b.y));
+      const maxObsBottom = Math.max(...blockers.map((b) => b.y + b.height));
+      const avgY = (sourceY + targetY) / 2;
+      const distAbove = Math.abs(avgY - (minObsTop - 44));
+      const distBelow = Math.abs(avgY - (maxObsBottom + 44));
+      const extraLane = parallelCount > 1 ? (parallelIndex - (parallelCount - 1) / 2) * 32 : 0;
+      const detourY =
+        distAbove <= distBelow
+          ? minObsTop - 48 - Math.abs(extraLane)
+          : maxObsBottom + 48 + Math.abs(extraLane);
+
+      const exitX = sourceX + (targetX >= sourceX ? 24 : -24);
+      const enterX = targetX + (targetX >= sourceX ? -24 : 24);
+      edgePath = `M ${sourceX} ${sourceY} L ${exitX} ${sourceY} L ${exitX} ${detourY} L ${enterX} ${detourY} L ${enterX} ${targetY} L ${targetX} ${targetY}`;
+      labelX = (exitX + enterX) / 2;
+      labelY = detourY;
+    } else if (parallelCount > 1) {
+      // Separate parallel / bidirectional edges cleanly with distinct curved lanes & non-overlapping labels
+      const laneOffset = (parallelIndex - (parallelCount - 1) / 2) * 56;
+      const dx = targetX - sourceX;
+      const dy = targetY - sourceY;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      const midX = (sourceX + targetX) / 2 + nx * laneOffset;
+      const midY = (sourceY + targetY) / 2 + ny * laneOffset;
+
+      edgePath = `M ${sourceX} ${sourceY} Q ${midX} ${midY} ${targetX} ${targetY}`;
+      labelX = 0.25 * sourceX + 0.5 * midX + 0.25 * targetX;
+      labelY = 0.25 * sourceY + 0.5 * midY + 0.25 * targetY;
+    } else {
+      const [p, lx, ly] = getSmoothStepPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+        borderRadius: 14,
+        offset: 32,
+      });
+      edgePath = p;
+      labelX = lx;
+      labelY = ly;
+    }
   }
 
   if (!rel) return null;

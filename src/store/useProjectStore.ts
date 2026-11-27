@@ -15,6 +15,11 @@ import {
 } from '../model/schema';
 import { createDemoProject } from '../model/defaults';
 import { validateProject } from '../model/validator';
+import {
+  cleanupOrphanElements,
+  fixAllValidationIssues,
+  fixValidationIssue,
+} from '../model/autoFix';
 import { applyDesignPattern, DesignPatternKind, generateGettersSetters } from '../model/patterns';
 import { computeElkLayout } from '../engines/layout/elkLayout';
 import { parsePlantUml, parsePlantUmlBlocks } from '../engines/plantuml/parser';
@@ -127,6 +132,8 @@ interface ProjectStore {
   applyAiPlantUml: (rawPlantUml: string) => Promise<void>;
   applyMethodBodies: (elementId: string, lang: TargetLanguage, bodies: Record<string, string>) => number;
   applyAiTestClass: (targetElementId: string, lang: TargetLanguage, testPuml: string, testBodies: Record<string, string>) => Promise<void>;
+  fixIssue: (issue: ValidationIssue) => void;
+  fixAllIssues: () => void;
 }
 
 const initialProject = createDemoProject();
@@ -746,7 +753,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         nextRelations[r.id] = r;
         return r.id;
       });
-      return commitProject(s, {
+      const updatedProject: BoumlProject = {
         ...s.project,
         elements: nextElements,
         relations: nextRelations,
@@ -761,7 +768,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             subsystems: parsed.subsystems,
           },
         },
-      });
+      };
+      // Automatically remove replaced elements/relations no longer referenced by any diagram (prevents orphan duplicates!)
+      const cleaned = cleanupOrphanElements(updatedProject).project;
+      return commitProject(s, cleaned);
     });
     await get().runAutoLayout();
     get().showToast('Modèle synchronisé depuis PlantUML.', 'success');
@@ -1058,5 +1068,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       `Classe de tests "${testEl.name}" ajoutée au diagramme avec ${testEl.operations.length} test(s) !`,
       'success'
     );
+  },
+
+  fixIssue: (issue) => {
+    if (issue.code === 'SOLID-SRP') {
+      get().openAiAssistant({
+        tab: 'modify',
+        elementId: issue.elementId,
+        initialAction: 'audit_solid',
+      });
+      return;
+    }
+    const res = fixValidationIssue(get().project, issue);
+    if (res.fixed) {
+      set((s) => commitProject(s, res.project));
+      get().showToast(res.summary, 'success');
+    } else {
+      get().showToast(res.summary, 'info');
+    }
+  },
+
+  fixAllIssues: () => {
+    const res = fixAllValidationIssues(get().project);
+    set((s) => commitProject(s, res.project));
+    if (res.fixedCount > 0) {
+      get().showToast(
+        `${res.fixedCount} problème(s) UML corrigé(s) automatiquement (doublons orphelins nettoyés).`,
+        'success'
+      );
+    } else {
+      get().showToast('Modèle déjà propre (aucune erreur corrigeable automatiquement).', 'info');
+    }
   },
 }));

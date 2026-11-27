@@ -58,10 +58,14 @@ export const UmlNode: React.FC<NodeProps> = ({ data, selected }) => {
 
   const handles = (
     <>
-      <Handle type="target" position={Position.Top} id="top" className={handleStyle} />
-      <Handle type="source" position={Position.Bottom} id="bottom" className={handleStyle} />
-      <Handle type="target" position={Position.Left} id="left" className={handleStyle} />
-      <Handle type="source" position={Position.Right} id="right" className={handleStyle} />
+      <Handle type="source" position={Position.Top} id="top-src" className={handleStyle} />
+      <Handle type="target" position={Position.Top} id="top-tgt" className={handleStyle} />
+      <Handle type="source" position={Position.Bottom} id="bottom-src" className={handleStyle} />
+      <Handle type="target" position={Position.Bottom} id="bottom-tgt" className={handleStyle} />
+      <Handle type="source" position={Position.Left} id="left-src" className={handleStyle} />
+      <Handle type="target" position={Position.Left} id="left-tgt" className={handleStyle} />
+      <Handle type="source" position={Position.Right} id="right-src" className={handleStyle} />
+      <Handle type="target" position={Position.Right} id="right-tgt" className={handleStyle} />
     </>
   );
 

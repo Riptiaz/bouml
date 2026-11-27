@@ -6,6 +6,7 @@ import {
 } from '../model/schema';
 import { generatePlantUml } from '../engines/plantuml/generator';
 import { parsePlantUml } from '../engines/plantuml/parser';
+import { AiAttachment } from '../utils/attachments';
 
 export type ConcreteAiModelId =
   | 'gemini-4-hydrogen'
@@ -118,6 +119,7 @@ interface RawGeminiCallOptions {
   model: ConcreteAiModelId;
   systemInstruction: string;
   prompt: string;
+  attachments?: AiAttachment[];
 }
 
 export interface GeminiCallMeta {
@@ -128,6 +130,28 @@ export interface GeminiCallMeta {
   fallbackReason?: string;
 }
 
+function buildUserParts(prompt: string, attachments?: AiAttachment[]): Array<Record<string, unknown>> {
+  const parts: Array<Record<string, unknown>> = [];
+  if (attachments && attachments.length > 0) {
+    for (const att of attachments) {
+      if (att.base64Data) {
+        parts.push({
+          inlineData: {
+            mimeType: att.mimeType,
+            data: att.base64Data,
+          },
+        });
+      } else if (att.textContent) {
+        parts.push({
+          text: `=== Pièce jointe : ${att.name} ===\n${att.textContent}\n=== Fin de ${att.name} ===`,
+        });
+      }
+    }
+  }
+  parts.push({ text: prompt });
+  return parts;
+}
+
 async function callSingleModel(opts: RawGeminiCallOptions): Promise<string> {
   const body: Record<string, unknown> = {
     systemInstruction: {
@@ -136,7 +160,7 @@ async function callSingleModel(opts: RawGeminiCallOptions): Promise<string> {
     contents: [
       {
         role: 'user',
-        parts: [{ text: opts.prompt }],
+        parts: buildUserParts(opts.prompt, opts.attachments),
       },
     ],
     generationConfig: {
@@ -154,7 +178,7 @@ async function callSingleModel(opts: RawGeminiCallOptions): Promise<string> {
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:generateContent`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 35000);
+  const timer = setTimeout(() => controller.abort(), 45000);
   try {
     const res = await fetch(`${endpoint}?key=${encodeURIComponent(opts.apiKey.trim())}`, {
       method: 'POST',
@@ -204,6 +228,7 @@ export async function callGeminiWithFallback(opts: {
   quickEdit?: boolean;
   systemInstruction: string;
   prompt: string;
+  attachments?: AiAttachment[];
   caller?: (o: RawGeminiCallOptions) => Promise<string>;
 }): Promise<GeminiCallMeta> {
   if (!opts.apiKey.trim()) {
@@ -227,6 +252,7 @@ export async function callGeminiWithFallback(opts: {
         model,
         systemInstruction: opts.systemInstruction,
         prompt: opts.prompt,
+        attachments: opts.attachments,
       });
       return {
         text,
@@ -281,11 +307,13 @@ export async function testGeminiConnection(
 export async function generateUmlFromSpec(
   apiKey: string,
   specText: string,
-  preferredModel?: AiModelSelection
+  preferredModel?: AiModelSelection,
+  attachments?: AiAttachment[]
 ): Promise<GeminiCallMeta> {
   const systemInstruction = [
     'Tu es un compilateur de spécifications UML 2.5 pour BouML v2.',
     'RÈGLE ABSOLUE : Réponds UNIQUEMENT par un ou plusieurs blocs PlantUML valides (@startuml ... @enduml). Zéro texte explicatif, zéro markdown, zéro tutoriel.',
+    'Si des images, captures de diagrammes ou PDF sont joints, analyse-les visuellement et fidèlement pour reproduire et enrichir le modèle demandé.',
     'RÈGLES STRICTES DE COHÉRENCE INTER-DIAGRAMMES ET SYNTAXE :',
     '1. Commence TOUJOURS par le bloc Diagramme de Classes (title Classes) contenant toutes les classes, attributs et méthodes publiques.',
     '2. Utilise STRICTEMENT {static} (JAMAIS {statique}) et {abstract} (JAMAIS {, }). Syntaxe : {static} +methode(p : type) : ret {const}. Constructeurs : +NomClasse(p : type).',
@@ -300,7 +328,8 @@ export async function generateUmlFromSpec(
     preferredModel,
     quickEdit: false,
     systemInstruction,
-    prompt: specText,
+    prompt: specText.trim() || 'Analyse les pièces jointes fournies et génère les diagrammes UML complets correspondants.',
+    attachments,
   });
 }
 
@@ -355,7 +384,8 @@ export async function askGeminiCopilot(
   targetElement: UmlElement | null,
   language: TargetLanguage,
   customPrompt?: string,
-  preferredModel?: AiModelSelection
+  preferredModel?: AiModelSelection,
+  attachments?: AiAttachment[]
 ): Promise<CopilotResult> {
   const pkgId = project.packages[0]?.id ?? 'pkg_root';
 
@@ -476,20 +506,26 @@ export async function askGeminiCopilot(
   // ALWAYS emits updated PlantUML so the diagram is modified directly on the canvas!
   const pumlContext = generatePlantUml(project, activeDiagramId);
   const focus = targetElement ? `Élément ciblé : ${targetElement.name}` : 'Diagramme actif complet';
-  const isSmallSingleNodeEdit = Boolean(targetElement && (customPrompt?.length ?? 0) < 120);
+  const isSmallSingleNodeEdit = Boolean(
+    targetElement &&
+      (!attachments || attachments.length === 0) &&
+      (customPrompt?.length ?? 0) < 120
+  );
 
   const res = await callGeminiWithFallback({
     apiKey,
     preferredModel,
     quickEdit: isSmallSingleNodeEdit,
+    attachments,
     systemInstruction: [
       'Tu es l\'éditeur UML 2.5 automatique de BouML v2.',
       'RÈGLE ABSOLUE : Tu dois APPLIQUER la modification demandée au diagramme actif et répondre UNIQUEMENT par le bloc PlantUML complet et mis à jour commençant par @startuml et finissant par @enduml.',
+      'Si des images, captures d\'écran ou documents (PDF/DOCX/TXT) sont joints, analyse-les fidèlement pour reproduire/intégrer leurs éléments dans le diagramme.',
       'INTERDICTION d\'écrire des phrases d\'explication ou de la prose.',
       'Conserve TOUS les éléments et relations existants qui ne doivent pas être supprimés.',
       'Syntaxe stricte : {static} (jamais {statique}), {abstract}, {const}, {readOnly}, alt/else/opt/loop pour les séquences, rectangle "..." pour les sous-systèmes, state "NomClasse" { ... } pour les états, Extension ..> CasDeBase : <<extend>>.',
     ].join('\n'),
-    prompt: `Modification demandée : ${customPrompt || 'Améliore ce modèle UML.'}\n${focus}\n\nDiagramme PlantUML actuel à modifier :\n${pumlContext}`,
+    prompt: `Modification demandée : ${customPrompt || 'Reproduis et intègre les éléments des pièces jointes dans le diagramme actif.'}\n${focus}\n\nDiagramme PlantUML actuel à modifier :\n${pumlContext}`,
   });
 
   const puml = extractApplicablePlantUml(res.text, pkgId);
